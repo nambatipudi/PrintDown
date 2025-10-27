@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrintDown - Markdown Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&family=Merriweather:wght@400;700&family=Playfair+Display:wght@400;700&family=Roboto+Mono:wght@400;500&family=Source+Sans+3:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;500&family=Spectral:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      transition: background-color 0.3s ease, color 0.3s ease, border 0.2s ease;
+    }
+
+    /* Drag and drop visual feedback */
+    body.drag-over {
+      border: 3px dashed #0e639c !important;
+      background-color: rgba(14, 99, 156, 0.05) !important;
+    }
+
+    body.drag-over::before {
+      content: "Drop Markdown files here";
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 24px;
+      font-weight: 600;
+      color: #0e639c;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 24px 48px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      pointer-events: none;
+      z-index: 10000;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      background: #252526;
+      border-bottom: 1px solid #3e3e42;
+      padding: 8px 12px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .theme-selector {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .theme-selector label {
+      font-size: 13px;
+      color: #d4d4d4;
+    }
+
+    .theme-selector select {
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid #3e3e42;
+      background: #2d2d30;
+      color: #d4d4d4;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .theme-selector select:hover {
+      background: #37373d;
+    }
+
+    .open-file-button {
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid #3e3e42;
+      background: #0e639c;
+      color: #ffffff;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s ease;
+    }
+
+    .open-file-button:hover {
+      background: #1177bb;
+    }
+
+    .open-file-button:active {
+      background: #0d5a8a;
+    }
+
+    .font-size-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .font-size-label {
+      font-size: 13px;
+      color: #d4d4d4;
+    }
+
+    .font-size-button {
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid #3e3e42;
+      background: #2d2d30;
+      color: #d4d4d4;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s ease;
+      min-width: 28px;
+    }
+
+    .font-size-button:hover {
+      background: #37373d;
+    }
+
+    .font-size-button:active {
+      background: #1e1e1e;
+    }
+
+    .tabs {
+      display: flex;
+      background: #252526;
+      overflow-x: auto;
+    }
+
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border-right: 1px solid #3e3e42;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      background: #2d2d30;
+      color: #d4d4d4;
+      font-size: 13px;
+    }
+
+    .tab.active {
+      background: #1e1e1e;
+      color: #ffffff;
+    }
+
+    .tab:hover {
+      background: #37373d;
+      color: #ffffff;
+    }
+
+    .tab-close {
+      margin-left: 8px;
+      cursor: pointer;
+      opacity: 0.6;
+      color: #d4d4d4;
+      font-weight: bold;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    .tab-close:hover {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+    }
+
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      font-size: 16px;
+      color: #888;
+    }
+
+    #content {
+      flex: 1;
+      overflow: auto;
+      padding: 20px 40px;
+      transition: background-color 0.3s ease;
+    }
+
+    #markdown-content {
+      max-width: 900px;
+      margin: 0 auto;
+      line-height: 1.6;
+      font-size: 16px;
+      transition: color 0.3s ease, font-size 0.2s ease;
+    }
+
+    /* Mermaid diagram styling */
+    .mermaid-diagram {
+      background: transparent;
+      text-align: center;
+      margin: 20px 0;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+
+    .mermaid-diagram svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* UML Sequence diagram styling */
+    .uml-sequence-diagram {
+      background: transparent;
+      text-align: center;
+      margin: 20px 0;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+
+    .uml-sequence-diagram svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    #markdown-content h1 { 
+      margin: 24px 0 16px; 
+      font-size: 2em;
+      font-weight: 700;
+      transition: color 0.3s ease;
+    }
+    #markdown-content h2 { 
+      margin: 20px 0 12px; 
+      font-size: 1.5em;
+      font-weight: 600;
+      transition: color 0.3s ease;
+    }
+    #markdown-content h3 { 
+      margin: 16px 0 8px; 
+      font-size: 1.25em;
+      font-weight: 600;
+      transition: color 0.3s ease;
+    }
+    #markdown-content p { margin: 12px 0; }
+    #markdown-content code { 
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 0.9em;
+      transition: background-color 0.3s ease, color 0.3s ease;
+    }
+    #markdown-content pre {
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 12px 0;
+      transition: background-color 0.3s ease;
+    }
+    #markdown-content pre code {
+      background: none;
+      padding: 0;
+    }
+    #markdown-content ul, #markdown-content ol {
+      margin-left: 24px;
+      margin-bottom: 12px;
+    }
+    #markdown-content strong {
+      font-weight: 600;
+    }
+    #markdown-content em {
+      font-style: italic;
+    }
+    #markdown-content a {
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+    #markdown-content a:hover {
+      text-decoration: underline;
+    }
+    #markdown-content blockquote {
+      margin: 16px 0;
+      padding: 12px 20px;
+      border-left: 4px solid;
+      transition: background-color 0.3s ease, border-color 0.3s ease;
+    }
+
+    /* MathJax styling - prevent clipping and ensure proper layout */
+    mjx-container {
+      overflow: visible !important;
+      line-height: normal;
+    }
+    
+    /* Inline math - align properly with text */
+    mjx-container[display="false"] {
+      display: inline-block !important;
+      vertical-align: middle;
+      margin: 0 0.1em;
+    }
+    
+    /* Display math - centered with spacing */
+    mjx-container[display="true"] {
+      display: block !important;
+      margin: 1em 0;
+      text-align: center;
+    }
+    
+    mjx-container[jax="SVG"] {
+      overflow: visible !important;
+    }
+    
+    /* Ensure SVG scales properly */
+    mjx-container svg {
+      vertical-align: middle;
+    }
+    /* Theme Styles */
+    /* Default Dark Theme */
+    body {
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+    #content {
+      background: #1e1e1e;
+    }
+    #markdown-content code {
+      background: #2d2d30;
+      color: #ce9178;
+    }
+    #markdown-content pre {
+      background: #2d2d30;
+    }
+    #markdown-content a {
+      color: #4fc3f7;
+    }
+    #markdown-content blockquote {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: #4fc3f7;
+      color: #b0b0b0;
+    }
+    #markdown-content h1, #markdown-content h2, #markdown-content h3 {
+      color: #4ec9b0;
+    }
+
+    /* Print stylesheet for PDF export */
+    @media print {
+      @page {
+        size: Letter portrait;
+        margin: 0.75in;
+      }
+
+      /* Force light theme for PDF */
+      body {
+        background: #ffffff !important;
+        color: #000000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      #content {
+        background: #ffffff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+
+      #markdown-content {
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        /* Don't override inline font-size - let user's font size setting apply */
+      }
+
+      #markdown-content h1,
+      #markdown-content h2,
+      #markdown-content h3 {
+        color: #000000 !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+
+      #markdown-content p,
+      #markdown-content ul,
+      #markdown-content ol {
+        orphans: 3;
+        widows: 3;
+      }
+
+      #markdown-content code,
+      #markdown-content pre {
+        background: #f5f5f5 !important;
+        color: #000000 !important;
+        border: 1px solid #cccccc !important;
+      }
+
+      #markdown-content blockquote {
+        background: #f9f9f9 !important;
+        border-color: #888 !important;
+        color: #444 !important;
+      }
+
+      /* Hide chrome-y app UI in the PDF */
+      .header,
+      .tabs,
+      .theme-selector,
+      .font-size-controls {
+        display: none !important;
+      }
+
+      /* Constrain diagrams to reasonable size for PDF */
+      .mermaid-diagram,
+      .uml-sequence-diagram {
+        overflow: visible !important;
+        padding: 10px 0 !important;
+        margin: 15px auto !important;
+        max-width: 90% !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-before: auto !important;
+        page-break-after: auto !important;
+      }
+
+      .mermaid-diagram svg,
+      .uml-sequence-diagram svg {
+        max-width: 100% !important;
+        max-height: 600px !important;
+        width: auto !important;
+        height: auto !important;
+        display: block !important;
+        margin: 0 auto !important;
+      }
+    }
+
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="tabs" id="tabs"></div>
+    <div class="font-size-controls">
+      <span class="font-size-label">Font Size:</span>
+      <button class="font-size-button" id="decrease-font" title="Decrease font size">-</button>
+      <button class="font-size-button" id="reset-font" title="Reset font size">⟲</button>
+      <button class="font-size-button" id="increase-font" title="Increase font size">+</button>
+    </div>
+    <div class="theme-selector">
+      <label for="theme-select">Theme:</label>
+      <select id="theme-select">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="sepia">Sepia</option>
+        <option value="nord">Nord</option>
+        <option value="dracula">Dracula</option>
+        <option value="solarized-light">Solarized Light</option>
+        <option value="github">GitHub</option>
+        <option value="monokai">Monokai</option>
+        <option value="literary">📚 Literary</option>
+        <option value="terminal">⌨️ Terminal</option>
+        <option value="oceanic">🌊 Oceanic</option>
+        <option value="newspaper">📰 Newspaper</option>
+        <option value="cyberpunk">🤖 Cyberpunk</option>
+        <option value="forest">🌲 Forest</option>
+        <option value="minimal">⚪ Minimal</option>
+        <option value="academic">🎓 Academic</option>
+      </select>
+    </div>
+  </div>
+  <div id="content">
+    <div class="empty-state">Open a Markdown file to begin</div>
+    <div id="markdown-content" style="display: none;"></div>
+  </div>
+  
+  <!-- MathJax Configuration - MUST come before loading MathJax -->
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$','$$'], ['\\[','\\]']],
+        processEscapes: true,
+        packages: {'[+]': ['base', 'ams', 'mathtools', 'color', 'cancel', 'bbox', 'mhchem', 'physics']},
+        macros: {
+          RR: '{\\mathbb{R}}',
+          NN: '{\\mathbb{N}}',
+          ZZ: '{\\mathbb{Z}}',
+          QQ: '{\\mathbb{Q}}',
+          CC: '{\\mathbb{C}}',
+        }
+      },
+      svg: { 
+        fontCache: 'global'
+      },
+      startup: {
+        ready: () => {
+          console.log('MathJax is ready!');
+          MathJax.startup.defaultReady();
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  
+  <!-- Mermaid for sequence and other diagrams -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    window.mermaid = mermaid;
+  </script>
+  
+  <!-- js-sequence-diagrams for UML sequence diagrams -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.13.6/underscore-min.js"></script>
+  <script src="https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js"></script>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>

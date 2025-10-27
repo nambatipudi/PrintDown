@@ -1,0 +1,114 @@
+name: Manual Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build for'
+        required: true
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    if: github.event.inputs.platform == 'windows' || github.event.inputs.platform == 'all'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Prepare build icons
+        run: npm run prepare-build
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    if: github.event.inputs.platform == 'macos' || github.event.inputs.platform == 'all'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Build macOS installer
+        run: npm run dist:mac
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: |
+            release/*.dmg
+            release/*.zip
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'linux' || github.event.inputs.platform == 'all'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Build Linux installer
+        run: npm run dist:linux
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: |
+            release/*.AppImage
+            release/*.deb
