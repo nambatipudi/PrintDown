@@ -52,6 +52,10 @@
     "appId": "com.printdown.app",
     "productName": "PrintDown",
     "copyright": "Copyright © 2025",
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"

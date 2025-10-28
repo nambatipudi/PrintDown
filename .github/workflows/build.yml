@@ -6,6 +6,9 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -51,7 +54,6 @@ jobs:
         run: npm run dist:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEBUG: electron-builder
 
       - name: Build Linux installer
         if: matrix.os == 'ubuntu-latest'
