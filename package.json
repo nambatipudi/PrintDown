@@ -24,7 +24,10 @@
     "electron",
     "pdf"
   ],
-  "author": "",
+  "author": {
+    "name": "Narayan Ambatipudi",
+    "email": "110836089+nambatipudi@users.noreply.github.com"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.10.0",
