@@ -42,13 +42,16 @@ jobs:
 
       - name: Clean build artifacts (macOS)
         if: matrix.os == 'macos-latest'
-        run: rm -rf release
+        run: |
+          rm -rf release
+          rm -rf dist
 
       - name: Build macOS installer
         if: matrix.os == 'macos-latest'
         run: npm run dist:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: electron-builder
 
       - name: Build Linux installer
         if: matrix.os == 'ubuntu-latest'
