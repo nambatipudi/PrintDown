@@ -5,9 +5,6 @@ node_modules/
 dist/
 release/
 
-# Icons (generated)
-icons/
-
 # OS files
 .DS_Store
 Thumbs.db
