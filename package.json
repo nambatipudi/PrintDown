@@ -104,8 +104,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
-      "title": "${productName} ${version}",
-      "icon": "build/icon.icns"
+      "title": "${productName} ${version}"
     },
     "linux": {
       "target": ["AppImage", "deb"],
