@@ -50,7 +50,14 @@ Render complex diagrams directly in your Markdown:
 - Adjustable font size with +/- buttons
 - Smooth scaling from 50% to 200%
 - Reset button to return to default
-- Persistent settings across sessions
+- Persistent across sessions and respected by PDF export
+
+### Image Size Control (Per‑Image)
+- Resize images individually directly in the viewer
+- Hover an image to see a dashed outline and a bottom‑right handle
+- Drag the handle to resize while preserving aspect ratio
+- Double‑click the image to reset to 100%
+- Sizes persist per file and are honored by PDF export
 
 ### PDF Export
 Export your Markdown to PDFs:
@@ -106,6 +113,12 @@ PrintDown offers multiple convenient ways to open Markdown files:
 - Click **⟲** button to reset to default
 - Click **+** button to increase
 
+### Resizing Images (per‑image)
+- Hover any image to reveal a resize handle at the bottom‑right
+- Drag the handle to resize (aspect ratio preserved)
+- Double‑click the image to reset to 100%
+- Your choice is remembered per file and used during PDF export
+
 ### Changing Themes
 Select from the theme dropdown in the top-right corner.
 
@@ -127,6 +140,15 @@ Select from the theme dropdown in the top-right corner.
 | Print | `Ctrl/Cmd + P` |
 | Export to PDF | `Ctrl/Cmd + E` |
 | Exit | `Ctrl/Cmd + Q` |
+
+## Why PrintDown (vs. VS Code Preview)
+
+- **Better Math Rendering**: Robust MathJax pipeline with improved extraction/restore logic for inline/display math; consistent spacing around inline formulae and ellipses (\\ldots).
+- **Per‑Image Resizing**: Resize individual images visually and keep aspect ratio. Settings persist and apply to PDF output.
+- **Diagrams**: Built‑in Mermaid and UML sequence support with theme awareness; no extensions required.
+- **Print & Export**: First‑class PDF export (and print) that respects theme, font size, and image sizes with page‑friendly styles.
+- **Tabs & Management**: Lightweight multi‑tab viewer with right‑click tab menu (Close, Close Others, Close All).
+- **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead.
 
 ## Markdown Examples
 
