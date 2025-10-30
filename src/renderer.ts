@@ -799,6 +799,8 @@ async function renderTab(index: number) {
   
   // Set the HTML
   contentDiv.innerHTML = html;
+  // Enhance images with per-image resizing controls before further processing
+  setupResizableImages(contentDiv);
   
   // No-op delay previously used for protocol tests has been removed
   contentDiv.style.display = 'block';
@@ -860,6 +862,81 @@ async function renderTab(index: number) {
   saveSession();
 }
 
+// Add per-image resizing with aspect ratio preserved, persisted by src
+function setupResizableImages(container: HTMLElement) {
+  const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[];
+  imgs.forEach((img) => {
+    // Skip if already wrapped
+    if (img.parentElement && img.parentElement.classList.contains('resizable-image')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'resizable-image';
+
+    // Create unique key based on src
+    const key = `imageSize:${img.src}`;
+
+    // Determine initial width percent (saved or image natural percent)
+    const containerEl = container as HTMLElement;
+    const containerWidth = containerEl.clientWidth || 1;
+
+    // Use saved percent if available
+    const saved = localStorage.getItem(key);
+    let percent = saved ? parseFloat(saved) : Math.min(100, Math.round((img.clientWidth / containerWidth) * 100));
+    if (!isFinite(percent) || percent <= 0) percent = 100;
+
+    // Move the image into wrapper
+    img.replaceWith(wrapper);
+    wrapper.appendChild(img);
+    wrapper.style.width = `${percent}%`;
+    (wrapper as any)._imgKey = key;
+
+    // Add resize handle
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle';
+    wrapper.appendChild(handle);
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidthPx = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const dx = e.clientX - startX;
+      const newWidthPx = Math.max(50, startWidthPx + dx);
+      const parentWidth = containerEl.clientWidth || 1;
+      let newPercent = (newWidthPx / parentWidth) * 100;
+      newPercent = Math.max(20, Math.min(150, newPercent)); // 20%–150%
+      wrapper.style.width = `${newPercent}%`;
+    };
+    const onMouseUp = () => {
+      if (!isResizing) return;
+      isResizing = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Persist
+      const parentWidth = containerEl.clientWidth || 1;
+      const widthPx = wrapper.getBoundingClientRect().width;
+      const savePercent = Math.max(1, Math.min(500, (widthPx / parentWidth) * 100));
+      localStorage.setItem(key, savePercent.toFixed(2));
+    };
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      isResizing = true;
+      startX = e.clientX;
+      startWidthPx = wrapper.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Double-click to reset
+    wrapper.addEventListener('dblclick', () => {
+      wrapper.style.width = '100%';
+      localStorage.removeItem(key);
+    });
+  });
+}
+
 function updateTabUI() {
   const tabsContainer = document.getElementById('tabs')!;
   tabsContainer.innerHTML = '';
@@ -884,8 +961,44 @@ function updateTabUI() {
       closeTab(index);
     });
 
+    // Context menu (right click) on tab
+    tabEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const menu = document.getElementById('tab-context-menu') as HTMLDivElement | null;
+      if (!menu) return;
+      menu.style.display = 'block';
+      menu.style.left = `${e.clientX}px`;
+      menu.style.top = `${e.clientY}px`;
+      (menu as any)._tabIndex = index;
+    });
+
     tabsContainer.appendChild(tabEl);
   });
+
+  // Dismiss context menu on click elsewhere
+  document.addEventListener('click', () => {
+    const menu = document.getElementById('tab-context-menu') as HTMLDivElement | null;
+    if (menu) menu.style.display = 'none';
+  });
+
+  // Wire context menu actions once
+  const menu = document.getElementById('tab-context-menu') as HTMLDivElement | null;
+  if (menu && !(menu as any)._wired) {
+    menu.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement;
+      const action = target.getAttribute('data-action');
+      const idx = (menu as any)._tabIndex as number | undefined;
+      menu.style.display = 'none';
+      if (action === 'close' && idx !== undefined) {
+        closeTab(idx);
+      } else if (action === 'close-others' && idx !== undefined) {
+        closeOthers(idx);
+      } else if (action === 'close-all') {
+        closeAllTabs();
+      }
+    });
+    (menu as any)._wired = true;
+  }
 }
 
 function closeTab(index: number) {
@@ -903,6 +1016,27 @@ function closeTab(index: number) {
     activeTabIndex--;
   }
   
+  updateTabUI();
+  saveSession();
+}
+
+function closeAllTabs() {
+  tabs.splice(0, tabs.length);
+  activeTabIndex = -1;
+  const contentDiv = document.getElementById('markdown-content')!;
+  const emptyState = document.querySelector('.empty-state') as HTMLElement;
+  contentDiv.style.display = 'none';
+  emptyState.style.display = 'flex';
+  updateTabUI();
+  saveSession();
+}
+
+function closeOthers(index: number) {
+  const keep = tabs[index];
+  if (!keep) return;
+  tabs.splice(0, tabs.length, keep);
+  activeTabIndex = 0;
+  renderTab(0);
   updateTabUI();
   saveSession();
 }
@@ -1192,6 +1326,21 @@ const decreaseFontBtn = document.getElementById('decrease-font');
 const resetFontBtn = document.getElementById('reset-font');
 const increaseFontBtn = document.getElementById('increase-font');
 
+// Image scaling controls
+let imageScaleFactor = 1.0;
+const IMG_MIN = 0.3;
+const IMG_MAX = 2.0;
+const IMG_STEP = 0.1;
+
+function applyImageScaleFactor(factor: number) {
+  document.documentElement.style.setProperty('--image-scale', factor.toString());
+  localStorage.setItem('imageScaleFactor', factor.toString());
+}
+
+const decreaseImageBtn = document.getElementById('decrease-image');
+const resetImageBtn = document.getElementById('reset-image');
+const increaseImageBtn = document.getElementById('increase-image');
+
 if (decreaseFontBtn && resetFontBtn && increaseFontBtn) {
   // Load saved font size factor
   const savedFactor = localStorage.getItem('fontSizeFactor');
@@ -1221,6 +1370,34 @@ if (decreaseFontBtn && resetFontBtn && increaseFontBtn) {
     if (fontSizeFactor < MAX_FACTOR) {
       fontSizeFactor = Math.min(MAX_FACTOR, fontSizeFactor + STEP);
       applyFontSizeFactor(fontSizeFactor);
+    }
+  });
+}
+
+// Wire image size controls
+if (decreaseImageBtn && resetImageBtn && increaseImageBtn) {
+  const savedImg = localStorage.getItem('imageScaleFactor');
+  if (savedImg !== null) {
+    imageScaleFactor = parseFloat(savedImg);
+  }
+  applyImageScaleFactor(imageScaleFactor);
+
+  decreaseImageBtn.addEventListener('click', () => {
+    if (imageScaleFactor > IMG_MIN) {
+      imageScaleFactor = Math.max(IMG_MIN, Math.round((imageScaleFactor - IMG_STEP) * 100) / 100);
+      applyImageScaleFactor(imageScaleFactor);
+    }
+  });
+
+  resetImageBtn.addEventListener('click', () => {
+    imageScaleFactor = 1.0;
+    applyImageScaleFactor(imageScaleFactor);
+  });
+
+  increaseImageBtn.addEventListener('click', () => {
+    if (imageScaleFactor < IMG_MAX) {
+      imageScaleFactor = Math.min(IMG_MAX, Math.round((imageScaleFactor + IMG_STEP) * 100) / 100);
+      applyImageScaleFactor(imageScaleFactor);
     }
   });
 }
@@ -1358,7 +1535,7 @@ document.head.appendChild(style);
 const screenStyle = document.createElement('style');
 screenStyle.textContent = `
   #markdown-content img {
-    max-width: 100%;
+    max-width: calc(var(--image-scale, 1) * 100%);
     max-height: 80vh; /* keep within viewport height */
     height: auto;
     width: auto;
@@ -1375,6 +1552,33 @@ screenStyle.textContent = `
   /* Ensure inline math doesn't stick to neighboring text */
   #markdown-content mjx-container[display="inline"] {
     margin: 0 0.2em !important;
+  }
+
+  /* Resizable image wrapper */
+  .resizable-image {
+    position: relative;
+    display: inline-block;
+    margin: 12px auto;
+    cursor: default;
+  }
+  .resizable-image img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .resizable-image:hover {
+    outline: 1px dashed rgba(128,128,128,0.6);
+  }
+  .resize-handle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(0,0,0,0.25);
+    border-radius: 2px;
+    cursor: nwse-resize;
   }
 `;
 document.head.appendChild(screenStyle);

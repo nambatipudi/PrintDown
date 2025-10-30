@@ -476,6 +476,13 @@
     <div id="markdown-content" style="display: none;"></div>
   </div>
   
+  <!-- Simple context menu for tabs -->
+  <div id="tab-context-menu" style="display:none; position: fixed; z-index: 10000; background: #2d2d30; color: #d4d4d4; border: 1px solid #3e3e42; border-radius: 4px; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+    <div data-action="close" style="padding: 8px 12px; cursor: pointer;">Close</div>
+    <div data-action="close-others" style="padding: 8px 12px; cursor: pointer; border-top:1px solid #3e3e42;">Close Others</div>
+    <div data-action="close-all" style="padding: 8px 12px; cursor: pointer; border-top:1px solid #3e3e42;">Close All</div>
+  </div>
+  
   <!-- MathJax Configuration - MUST come before loading MathJax -->
   <script>
     window.MathJax = {
