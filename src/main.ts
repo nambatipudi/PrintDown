@@ -40,6 +40,8 @@ function createWindow() {
     width: 1200,
     height: 800,
     icon: path.join(__dirname, '../icon.png'),
+    backgroundColor: '#1e1e1e', // Set explicit background color to prevent white showing through
+    titleBarStyle: 'default', // Ensure consistent title bar
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -81,6 +83,112 @@ function createWindow() {
     {
       label: 'View',
       submenu: [
+        {
+          label: 'Font Size',
+          submenu: [
+            {
+              label: 'Increase Font Size',
+              accelerator: 'CmdOrCtrl+=',
+              click: () => mainWindow?.webContents.send('menu-font-increase')
+            },
+            {
+              label: 'Decrease Font Size',
+              accelerator: 'CmdOrCtrl+-',
+              click: () => mainWindow?.webContents.send('menu-font-decrease')
+            },
+            {
+              label: 'Reset Font Size',
+              accelerator: 'CmdOrCtrl+0',
+              click: () => mainWindow?.webContents.send('menu-font-reset')
+            }
+          ]
+        },
+        {
+          label: 'Theme',
+          submenu: [
+            {
+              label: 'Dark',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'dark')
+            },
+            {
+              label: 'Light',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'light')
+            },
+            {
+              label: 'Sepia',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'sepia')
+            },
+            {
+              label: 'Nord',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'nord')
+            },
+            {
+              label: 'Dracula',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'dracula')
+            },
+            {
+              label: 'Solarized Light',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'solarized-light')
+            },
+            {
+              label: 'GitHub',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'github')
+            },
+            {
+              label: 'Monokai',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'monokai')
+            },
+            {
+              label: 'Literary',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'literary')
+            },
+            {
+              label: 'Terminal',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'terminal')
+            },
+            {
+              label: 'Oceanic',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'oceanic')
+            },
+            {
+              label: 'Newspaper',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'newspaper')
+            },
+            {
+              label: 'Cyberpunk',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'cyberpunk')
+            },
+            {
+              label: 'Forest',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'forest')
+            },
+            {
+              label: 'Minimal',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'minimal')
+            },
+            {
+              label: 'Academic',
+              type: 'radio',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
+            }
+          ]
+        },
+        { type: 'separator' },
         {
           label: 'Toggle Developer Tools',
           accelerator: 'F12',

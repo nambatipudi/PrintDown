@@ -52,35 +52,10 @@
       border-bottom: 1px solid #3e3e42;
       padding: 8px 12px;
       gap: 16px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
     }
 
-    .theme-selector {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
 
-    .theme-selector label {
-      font-size: 13px;
-      color: #d4d4d4;
-    }
-
-    .theme-selector select {
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 1px solid #3e3e42;
-      background: #2d2d30;
-      color: #d4d4d4;
-      font-size: 13px;
-      cursor: pointer;
-      outline: none;
-    }
-
-    .theme-selector select:hover {
-      background: #37373d;
-    }
 
     .open-file-button {
       padding: 6px 12px;
@@ -102,42 +77,12 @@
       background: #0d5a8a;
     }
 
-    .font-size-controls {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
 
-    .font-size-label {
-      font-size: 13px;
-      color: #d4d4d4;
-    }
-
-    .font-size-button {
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 1px solid #3e3e42;
-      background: #2d2d30;
-      color: #d4d4d4;
-      font-size: 13px;
-      cursor: pointer;
-      outline: none;
-      transition: background-color 0.2s ease;
-      min-width: 28px;
-    }
-
-    .font-size-button:hover {
-      background: #37373d;
-    }
-
-    .font-size-button:active {
-      background: #1e1e1e;
-    }
 
     .tabs {
       display: flex;
       background: #252526;
-      overflow-x: auto;
+      overflow-x: hidden;
     }
 
     .tab {
@@ -177,6 +122,39 @@
       opacity: 1;
       background: rgba(255, 255, 255, 0.1);
       color: #ffffff;
+    }
+
+    /* Tab context menu */
+    #tab-context-menu {
+      display: none;
+      position: fixed;
+      background: #2d2d30;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      z-index: 1000;
+      min-width: 120px;
+    }
+
+    #tab-context-menu div {
+      padding: 8px 12px;
+      cursor: pointer;
+      color: #d4d4d4;
+      font-size: 13px;
+      transition: background-color 0.2s ease;
+    }
+
+    #tab-context-menu div:hover {
+      background: #37373d;
+      color: #ffffff;
+    }
+
+    #tab-context-menu div:first-child {
+      border-radius: 3px 3px 0 0;
+    }
+
+    #tab-context-menu div:last-child {
+      border-radius: 0 0 3px 3px;
     }
 
     .empty-state {
@@ -443,44 +421,10 @@
 <body>
   <div class="header">
     <div class="tabs" id="tabs"></div>
-    <div class="font-size-controls">
-      <span class="font-size-label">Font Size:</span>
-      <button class="font-size-button" id="decrease-font" title="Decrease font size">-</button>
-      <button class="font-size-button" id="reset-font" title="Reset font size">⟲</button>
-      <button class="font-size-button" id="increase-font" title="Increase font size">+</button>
-    </div>
-    <div class="theme-selector">
-      <label for="theme-select">Theme:</label>
-      <select id="theme-select">
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-        <option value="sepia">Sepia</option>
-        <option value="nord">Nord</option>
-        <option value="dracula">Dracula</option>
-        <option value="solarized-light">Solarized Light</option>
-        <option value="github">GitHub</option>
-        <option value="monokai">Monokai</option>
-        <option value="literary">📚 Literary</option>
-        <option value="terminal">⌨️ Terminal</option>
-        <option value="oceanic">🌊 Oceanic</option>
-        <option value="newspaper">📰 Newspaper</option>
-        <option value="cyberpunk">🤖 Cyberpunk</option>
-        <option value="forest">🌲 Forest</option>
-        <option value="minimal">⚪ Minimal</option>
-        <option value="academic">🎓 Academic</option>
-      </select>
-    </div>
   </div>
   <div id="content">
     <div class="empty-state">Open a Markdown file to begin</div>
     <div id="markdown-content" style="display: none;"></div>
-  </div>
-  
-  <!-- Simple context menu for tabs -->
-  <div id="tab-context-menu" style="display:none; position: fixed; z-index: 10000; background: #2d2d30; color: #d4d4d4; border: 1px solid #3e3e42; border-radius: 4px; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
-    <div data-action="close" style="padding: 8px 12px; cursor: pointer;">Close</div>
-    <div data-action="close-others" style="padding: 8px 12px; cursor: pointer; border-top:1px solid #3e3e42;">Close Others</div>
-    <div data-action="close-all" style="padding: 8px 12px; cursor: pointer; border-top:1px solid #3e3e42;">Close All</div>
   </div>
   
   <!-- MathJax Configuration - MUST come before loading MathJax -->
@@ -504,41 +448,33 @@
       },
       startup: {
         ready: () => {
-          console.log('[MATHJAX] MathJax is ready!');
-          console.log('[MATHJAX] MathJax version:', MathJax.version);
-          console.log('[MATHJAX] Configuration:', {
-            inlineMath: MathJax.config.tex.inlineMath,
-            displayMath: MathJax.config.tex.displayMath,
-            processEscapes: MathJax.config.tex.processEscapes,
-            packages: MathJax.config.tex.packages
-          });
+          console.log('MathJax is ready!');
           MathJax.startup.defaultReady();
         }
       }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   
   <!-- Mermaid for sequence and other diagrams -->
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     window.mermaid = mermaid;
-    console.log('[MERMAID] Mermaid loaded, version:', mermaid.version || 'unknown');
   </script>
   
   <!-- js-sequence-diagrams for UML sequence diagrams -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.13.6/underscore-min.js"></script>
-  <script>
-    // Load js-sequence-diagrams and log when ready
-    const script = document.createElement('script');
-    script.src = 'https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js';
-    script.onload = () => {
-      console.log('[UML] js-sequence-diagrams loaded');
-      window.Diagram = Diagram;
-    };
-    document.body.appendChild(script);
-  </script>
+  <script src="https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js"></script>
+  
+  <!-- Tab context menu -->
+  <div id="tab-context-menu">
+    <div data-action="close">Close</div>
+    <div data-action="close-others">Close Others</div>
+    <div data-action="close-all">Close All</div>
+  </div>
   
   <script src="renderer.js"></script>
 </body>

@@ -33,7 +33,7 @@
     "@types/node": "^20.10.0",
     "copy-webpack-plugin": "^12.0.0",
     "css-loader": "^6.8.1",
-    "electron": "^28.0.0",
+    "electron": "^39.0.0",
     "electron-builder": "^26.0.12",
     "electron-store": "^8.1.0",
     "html-webpack-plugin": "^5.5.4",
@@ -83,11 +83,16 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.png",
@@ -101,7 +106,10 @@
       "shortcutName": "PrintDown"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon-mac.png",
       "category": "public.app-category.productivity",
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
@@ -114,7 +122,10 @@
       "title": "${productName} ${version}"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icons",
       "category": "Office",
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"

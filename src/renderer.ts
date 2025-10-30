@@ -3,6 +3,9 @@ import { Marked } from 'marked';
 // Declare the APIs exposed by preload script
 declare global {
   interface Window {
+    webUtils: {
+      getPathForFile: (file: File) => string;
+    };
     filePicker: {
       pickFile: () => Promise<string[] | null>;
     };
@@ -23,6 +26,10 @@ declare global {
       onMenuCopyDebugLogs: (callback: () => void) => void;
       onRestoreSession: (callback: (event: any, session: any) => void) => void;
       onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => void;
+      onMenuFontIncrease: (callback: () => void) => void;
+      onMenuFontDecrease: (callback: () => void) => void;
+      onMenuFontReset: (callback: () => void) => void;
+      onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
     };
     clipboard: {
       writeText: (text: string) => void;
@@ -45,6 +52,7 @@ interface Tab {
 
 const tabs: Tab[] = [];
 let activeTabIndex = -1;
+let sessionRestored = false; // Flag to prevent multiple session restorations
 
 const marked = new Marked({
   breaks: true,
@@ -1028,7 +1036,7 @@ function closeAllTabs() {
   contentDiv.style.display = 'none';
   emptyState.style.display = 'flex';
   updateTabUI();
-  saveSession();
+  saveSession(); // This will save an empty session, preventing unwanted restoration
 }
 
 function closeOthers(index: number) {
@@ -1233,6 +1241,36 @@ window.menuEvents.onMenuExportPDF(exportPDF);
 window.menuEvents.onMenuPrint(print);
 window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
 
+// Font size menu events
+window.menuEvents.onMenuFontIncrease(() => {
+  if (fontSizeFactor < MAX_FACTOR) {
+    fontSizeFactor = Math.min(MAX_FACTOR, fontSizeFactor + STEP);
+    applyFontSizeFactor(fontSizeFactor);
+  }
+});
+
+window.menuEvents.onMenuFontDecrease(() => {
+  if (fontSizeFactor > MIN_FACTOR) {
+    fontSizeFactor = Math.max(MIN_FACTOR, fontSizeFactor - STEP);
+    applyFontSizeFactor(fontSizeFactor);
+  }
+});
+
+window.menuEvents.onMenuFontReset(() => {
+  fontSizeFactor = 1.0;
+  applyFontSizeFactor(fontSizeFactor);
+});
+
+// Theme change menu event
+window.menuEvents.onMenuThemeChange((_event: any, theme: string) => {
+  applyTheme(theme as keyof typeof themes);
+  // Update the dropdown if it exists (for consistency)
+  const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
+  if (themeSelect) {
+    themeSelect.value = theme;
+  }
+});
+
 // Handle files opened from system (double-click on .md file)
 window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => {
   try {
@@ -1261,7 +1299,16 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
 });
 
 window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
+  // Only restore session once and only if no tabs are currently open
+  if (sessionRestored || tabs.length > 0) {
+    console.log('[SESSION] Skipping session restoration - already restored or tabs already open');
+    return;
+  }
+  
   if (session.openFiles && session.openFiles.length > 0) {
+    console.log('[SESSION] Restoring session with', session.openFiles.length, 'files');
+    sessionRestored = true; // Mark as restored to prevent future restorations
+    
     for (const filePath of session.openFiles) {
       try {
         const fileResult = await window.fileSystem.readFile(filePath);
@@ -1283,24 +1330,14 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
   }
 });
 
-// Initialize theme selector
-const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
-if (themeSelect) {
-  // Load saved theme
-  const savedTheme = localStorage.getItem('selectedTheme') || 'dark';
-  themeSelect.value = savedTheme;
-  
-  // Initialize Mermaid with theme before applying theme
-  const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(savedTheme);
-  initMermaid(isDarkTheme);
-  
-  applyTheme(savedTheme as keyof typeof themes);
-  
-  // Listen for theme changes
-  themeSelect.addEventListener('change', () => {
-    applyTheme(themeSelect.value as keyof typeof themes);
-  });
-}
+// Initialize theme
+const savedTheme = localStorage.getItem('selectedTheme') || 'dark';
+
+// Initialize Mermaid with theme before applying theme
+const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(savedTheme);
+initMermaid(isDarkTheme);
+
+applyTheme(savedTheme as keyof typeof themes);
 
 // Font size management with scaling factor
 let fontSizeFactor = 1.0; // Default scale factor
@@ -1321,10 +1358,14 @@ function applyFontSizeFactor(factor: number) {
   localStorage.setItem('fontSizeFactor', factor.toString());
 }
 
-// Initialize font size controls
-const decreaseFontBtn = document.getElementById('decrease-font');
-const resetFontBtn = document.getElementById('reset-font');
-const increaseFontBtn = document.getElementById('increase-font');
+// Initialize font size with saved value
+const savedFactor = localStorage.getItem('fontSizeFactor');
+if (savedFactor !== null) {
+  fontSizeFactor = parseFloat(savedFactor);
+  applyFontSizeFactor(fontSizeFactor);
+} else {
+  applyFontSizeFactor(fontSizeFactor);
+}
 
 // Image scaling controls
 let imageScaleFactor = 1.0;
@@ -1337,70 +1378,12 @@ function applyImageScaleFactor(factor: number) {
   localStorage.setItem('imageScaleFactor', factor.toString());
 }
 
-const decreaseImageBtn = document.getElementById('decrease-image');
-const resetImageBtn = document.getElementById('reset-image');
-const increaseImageBtn = document.getElementById('increase-image');
-
-if (decreaseFontBtn && resetFontBtn && increaseFontBtn) {
-  // Load saved font size factor
-  const savedFactor = localStorage.getItem('fontSizeFactor');
-  if (savedFactor !== null) {
-    fontSizeFactor = parseFloat(savedFactor);
-    applyFontSizeFactor(fontSizeFactor);
-  } else {
-    applyFontSizeFactor(fontSizeFactor);
-  }
-  
-  // Decrease font size
-  decreaseFontBtn.addEventListener('click', () => {
-    if (fontSizeFactor > MIN_FACTOR) {
-      fontSizeFactor = Math.max(MIN_FACTOR, fontSizeFactor - STEP);
-      applyFontSizeFactor(fontSizeFactor);
-    }
-  });
-  
-  // Reset font size to default (1.0)
-  resetFontBtn.addEventListener('click', () => {
-    fontSizeFactor = 1.0;
-    applyFontSizeFactor(fontSizeFactor);
-  });
-  
-  // Increase font size
-  increaseFontBtn.addEventListener('click', () => {
-    if (fontSizeFactor < MAX_FACTOR) {
-      fontSizeFactor = Math.min(MAX_FACTOR, fontSizeFactor + STEP);
-      applyFontSizeFactor(fontSizeFactor);
-    }
-  });
+// Initialize image scaling with saved value
+const savedImg = localStorage.getItem('imageScaleFactor');
+if (savedImg !== null) {
+  imageScaleFactor = parseFloat(savedImg);
 }
-
-// Wire image size controls
-if (decreaseImageBtn && resetImageBtn && increaseImageBtn) {
-  const savedImg = localStorage.getItem('imageScaleFactor');
-  if (savedImg !== null) {
-    imageScaleFactor = parseFloat(savedImg);
-  }
-  applyImageScaleFactor(imageScaleFactor);
-
-  decreaseImageBtn.addEventListener('click', () => {
-    if (imageScaleFactor > IMG_MIN) {
-      imageScaleFactor = Math.max(IMG_MIN, Math.round((imageScaleFactor - IMG_STEP) * 100) / 100);
-      applyImageScaleFactor(imageScaleFactor);
-    }
-  });
-
-  resetImageBtn.addEventListener('click', () => {
-    imageScaleFactor = 1.0;
-    applyImageScaleFactor(imageScaleFactor);
-  });
-
-  increaseImageBtn.addEventListener('click', () => {
-    if (imageScaleFactor < IMG_MAX) {
-      imageScaleFactor = Math.min(IMG_MAX, Math.round((imageScaleFactor + IMG_STEP) * 100) / 100);
-      applyImageScaleFactor(imageScaleFactor);
-    }
-  });
-}
+applyImageScaleFactor(imageScaleFactor);
 
 // Print/PDF styles
 const style = document.createElement('style');
@@ -1660,10 +1643,16 @@ document.addEventListener('DOMContentLoaded', () => {
       file.name.endsWith('.md') || file.name.endsWith('.markdown')
     );
 
+    // Mark session as restored to prevent interference with drag and drop
+    if (!sessionRestored) {
+      sessionRestored = true;
+    }
+
     // Open each Markdown file
     for (const file of markdownFiles) {
       try {
-        const filePath = (file as any).path; // Electron adds 'path' property to File objects
+        // Use webUtils.getPathForFile instead of deprecated file.path
+        const filePath = window.webUtils.getPathForFile(file);
         
         if (filePath) {
           const fileResult = await window.fileSystem.readFile(filePath);

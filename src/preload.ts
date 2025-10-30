@@ -1,4 +1,11 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+
+// Expose webUtils API for getting file paths from File objects
+contextBridge.exposeInMainWorld('webUtils', {
+  getPathForFile: (file: File) => {
+    return webUtils.getPathForFile(file);
+  }
+});
 
 // Expose file picker API to renderer process
 contextBridge.exposeInMainWorld('filePicker', {
@@ -60,6 +67,22 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => {
     ipcRenderer.removeAllListeners('open-file-from-system');
     ipcRenderer.on('open-file-from-system', callback);
+  },
+  onMenuFontIncrease: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-font-increase');
+    ipcRenderer.on('menu-font-increase', callback);
+  },
+  onMenuFontDecrease: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-font-decrease');
+    ipcRenderer.on('menu-font-decrease', callback);
+  },
+  onMenuFontReset: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-font-reset');
+    ipcRenderer.on('menu-font-reset', callback);
+  },
+  onMenuThemeChange: (callback: (event: any, theme: string) => void) => {
+    ipcRenderer.removeAllListeners('menu-theme-change');
+    ipcRenderer.on('menu-theme-change', callback);
   }
 });
 
