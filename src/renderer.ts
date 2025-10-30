@@ -391,6 +391,12 @@ let mathCounter = 0;
 // Mermaid diagram counter
 let mermaidCounter = 0;
 
+// Normalize TeX before sending to MathJax (tweak rendering consistency)
+function normalizeMathTex(tex: string): string {
+  // Prefer \ldots (ellipsis on baseline) for compact dots
+  return tex.replace(/\\dots/g, '\\ldots');
+}
+
 // Initialize Mermaid
 function initMermaid(isDarkTheme: boolean = true) {
   if (window.mermaid) {
@@ -513,20 +519,20 @@ function extractMath(content: string): string {
   // Extract ```math code blocks (GitHub style) and convert to $$
   content = content.replace(/```math\s*\n([\s\S]+?)\n```/g, (match, mathContent) => {
     const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, `$$${mathContent}$$`);
+    mathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
     return id;
   });
   
   // Extract display math $$...$$ and \[...\]
   content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match) => {
     const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, match);
+    mathStore.set(id, normalizeMathTex(match));
     return id;
   });
   
   content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match) => {
     const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, match);
+    mathStore.set(id, normalizeMathTex(match));
     return id;
   });
   
@@ -597,11 +603,21 @@ async function renderTab(index: number) {
       console.log('[MATH] Found bracket-wrapped math on separate lines:', match);
       return `[ ${mathContent} ]`;
     });
+
+    // Extract square bracket inline math: [ $...$ ] (VS Code style display math)
+    // Do this BEFORE generic inline $...$ extraction so the inner dollars are not consumed first
+    content = content.replace(/\[\s*\$([^$]+?)\$\s*\]/g, (match, mathContent) => {
+      const id = `MATH_DISPLAY_${tempCounter++}`;
+      tempMathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
+      console.log(`[MATH] Extracted square bracket math [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
+    });
     
     // Extract ```math code blocks (GitHub style) and convert to $$
     content = content.replace(/```math\s*\n([\s\S]+?)\n```/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, `$$${mathContent}$$`);
+      tempMathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
       console.log(`[MATH] Extracted math code block [${id}]:`, mathContent);
       // Wrap in HTML comment so Marked doesn't process or remove it
       return `<!-- ${id} -->`;
@@ -610,7 +626,7 @@ async function renderTab(index: number) {
     // Extract display math $$...$$ and \[...\]
     content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, match);
+      tempMathStore.set(id, normalizeMathTex(match));
       console.log(`[MATH] Extracted display math $$ [${id}]:`, mathContent);
       // Wrap in HTML comment so Marked doesn't process or remove it
       return `<!-- ${id} -->`;
@@ -618,7 +634,7 @@ async function renderTab(index: number) {
     
     content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, match);
+      tempMathStore.set(id, normalizeMathTex(match));
       console.log(`[MATH] Extracted display math \\[ [${id}]:`, mathContent);
       // Wrap in HTML comment so Marked doesn't process or remove it
       return `<!-- ${id} -->`;
@@ -632,7 +648,7 @@ async function renderTab(index: number) {
         const id = `MATH_INLINE_${tempCounter++}`;
         // Convert to $ syntax
         const cleaned = mathContent.replace(/^\(\s*/, '').replace(/\s*\)$/, '');
-        tempMathStore.set(id, `$${cleaned}$`);
+        tempMathStore.set(id, normalizeMathTex(`$${cleaned}$`));
         console.log(`[MATH] Extracted inline math ( ... ) [${id}]:`, cleaned);
         // Wrap in HTML comment so Marked doesn't process or remove it
         return prefix + `<!-- ${id} -->`;
@@ -665,7 +681,7 @@ async function renderTab(index: number) {
       
       if (isMath) {
         const id = `MATH_INLINE_${tempCounter++}`;
-        tempMathStore.set(id, match);
+        tempMathStore.set(id, normalizeMathTex(match));
         console.log(`[MATH] Extracted inline math $ [${id}]:`, mathContent);
         // Wrap in HTML comment so Marked doesn't process or remove it
         return `<!-- ${id} -->`;
@@ -679,21 +695,13 @@ async function renderTab(index: number) {
     // Extract inline math \(...\) (LaTeX style)
     content = content.replace(/\\\((.+?)\\\)/g, (match, mathContent) => {
       const id = `MATH_INLINE_${tempCounter++}`;
-      tempMathStore.set(id, match);
+      tempMathStore.set(id, normalizeMathTex(match));
       console.log(`[MATH] Extracted inline math \\( ... \\) [${id}]:`, mathContent);
       // Wrap in HTML comment so Marked doesn't process or remove it
       return `<!-- ${id} -->`;
     });
     
-    // Extract square bracket inline math: [ $...$ ] (VS Code style display math)
-    // This should be treated as display math, not inline
-    content = content.replace(/\[\s*\$([^$]+?)\$\s*\]/g, (match, mathContent) => {
-      const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, `$$${mathContent}$$`);
-      console.log(`[MATH] Extracted square bracket math [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
+    // (square bracket math extracted earlier)
     
     console.log(`[MATH] Extraction complete. Total math expressions: ${tempMathStore.size}`);
     console.log('[MATH] Math store contents:', Array.from(tempMathStore.entries()));
@@ -796,8 +804,7 @@ async function renderTab(index: number) {
   contentDiv.style.display = 'block';
   emptyState.style.display = 'none';
 
-  // Only process diagrams and math if not already rendered
-  if (!tab.isRendered) {
+  // Process diagrams and math on every render (tabs rebuild the DOM each time)
     // Process Mermaid diagrams first
     await processMermaidDiagrams(contentDiv);
 
@@ -841,8 +848,7 @@ async function renderTab(index: number) {
       console.warn('[MATHJAX] window.MathJax:', window.MathJax);
     }
     
-    tab.isRendered = true;
-  }
+  
   
   // Apply current theme
   const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
@@ -1364,6 +1370,11 @@ screenStyle.textContent = `
   #markdown-content .uml-sequence-diagram svg {
     max-width: 100%;
     height: auto;
+  }
+
+  /* Ensure inline math doesn't stick to neighboring text */
+  #markdown-content mjx-container[display="inline"] {
+    margin: 0 0.2em !important;
   }
 `;
 document.head.appendChild(screenStyle);
