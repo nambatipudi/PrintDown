@@ -497,7 +497,14 @@
       },
       startup: {
         ready: () => {
-          console.log('MathJax is ready!');
+          console.log('[MATHJAX] MathJax is ready!');
+          console.log('[MATHJAX] MathJax version:', MathJax.version);
+          console.log('[MATHJAX] Configuration:', {
+            inlineMath: MathJax.config.tex.inlineMath,
+            displayMath: MathJax.config.tex.displayMath,
+            processEscapes: MathJax.config.tex.processEscapes,
+            packages: MathJax.config.tex.packages
+          });
           MathJax.startup.defaultReady();
         }
       }
@@ -509,12 +516,22 @@
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     window.mermaid = mermaid;
+    console.log('[MERMAID] Mermaid loaded, version:', mermaid.version || 'unknown');
   </script>
   
   <!-- js-sequence-diagrams for UML sequence diagrams -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.13.6/underscore-min.js"></script>
-  <script src="https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js"></script>
+  <script>
+    // Load js-sequence-diagrams and log when ready
+    const script = document.createElement('script');
+    script.src = 'https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js';
+    script.onload = () => {
+      console.log('[UML] js-sequence-diagrams loaded');
+      window.Diagram = Diagram;
+    };
+    document.body.appendChild(script);
+  </script>
   
   <script src="renderer.js"></script>
 </body>

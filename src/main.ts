@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, protocol } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import Store from 'electron-store';
@@ -12,6 +12,28 @@ const store = new Store<{ session: SessionData }>();
 
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
+  
+  // Toggle to enable/disable verbose protocol logging
+  const PROTOCOL_DEBUG = false;
+
+// Register custom protocol to serve local files for images
+console.log('[PROTOCOL] Registering printdown scheme...');
+try {
+  const schemeResult = protocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'printdown',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true
+      }
+    }
+  ]);
+  console.log('[PROTOCOL] Scheme registration result:', schemeResult);
+} catch (error) {
+  console.error('[PROTOCOL] Scheme registration failed:', error);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -53,6 +75,21 @@ function createWindow() {
           label: 'Exit',
           accelerator: 'CmdOrCtrl+Q',
           click: () => app.quit()
+        }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Toggle Developer Tools',
+          accelerator: 'F12',
+          click: () => mainWindow?.webContents.toggleDevTools()
+        },
+        { type: 'separator' },
+        {
+          label: 'Copy Debug Logs',
+          click: () => mainWindow?.webContents.send('menu-copy-debug-logs')
         }
       ]
     },
@@ -127,6 +164,147 @@ if (!gotTheLock) {
 }
 
 app.whenReady().then(() => {
+  // Log app version on startup
+  console.log(`[APP] PrintDown starting, version: ${app.getVersion()}`);
+  
+  // Set up custom protocol handler for local file access
+  const protocolSuccess = protocol.registerFileProtocol('printdown', (request, callback) => {
+    // Remove the protocol part (printdown://)
+    let url = request.url.replace(/^printdown:\/\//, '');
+    
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ===== PROTOCOL REQUEST RECEIVED =====`);
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Request received: ${request.url}`);
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Parsed URL after protocol removal: ${url}`);
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Request headers:`, request.headers);
+    
+    try {
+      // Handle URL-encoded paths
+      url = decodeURIComponent(url);
+      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] URL decoded: ${url}`);
+      
+      // On Windows, normalize common malformed drive-letter patterns from URL parsing
+      if (process.platform === 'win32') {
+        // Case 1: starts with /C:/... (triple-slash URL form) → drop the leading slash
+        if (/^\/[A-Za-z]:\//.test(url)) {
+          url = url.slice(1);
+          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Stripped leading slash for drive path: ${url}`);
+        }
+        // Case 2: starts with c/Users/... (host interpreted as drive without colon) → insert colon
+        else if (/^[A-Za-z]\//.test(url)) {
+          const drive = url.charAt(0).toUpperCase();
+          const rest = url.slice(2); // skip 'c/'
+          url = `${drive}:/${rest}`;
+          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Reconstructed drive path: ${url}`);
+        }
+      }
+      
+      // On Windows, handle drive letter paths and case sensitivity
+      let normalizedPath: string;
+      if (process.platform === 'win32') {
+        // If it starts with a drive letter (C:, D:, etc.), normalize case and slashes
+        if (url.match(/^[A-Za-z]:/)) {
+          // Convert to uppercase drive letter for Windows
+          const driveLetter = url.charAt(0).toUpperCase();
+          const restOfPath = url.slice(1);
+          const correctedUrl = driveLetter + restOfPath;
+          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Corrected drive letter: ${correctedUrl}`);
+          
+          // Windows path - normalize slashes
+          normalizedPath = path.normalize(correctedUrl.replace(/\//g, path.sep));
+        } else {
+          // No drive letter - might be relative, resolve from current working directory
+          normalizedPath = path.resolve(url);
+        }
+      } else {
+        // Unix-like systems
+        normalizedPath = path.resolve(url);
+      }
+      
+      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Normalized path: ${normalizedPath}`);
+      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] File exists: ${fs.existsSync(normalizedPath)}`);
+      
+      // If file doesn't exist, try alternative path formats
+      if (!fs.existsSync(normalizedPath)) {
+        if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] File not found, trying alternative paths...`);
+        
+        // Try with different case combinations
+        const alternatives = [
+          normalizedPath,
+          normalizedPath.replace(/^C:/, 'c:'),
+          normalizedPath.replace(/^C:/, 'C:'),
+          path.resolve(process.cwd(), url),
+          path.resolve(process.cwd(), url.replace(/^[A-Za-z]:/, ''))
+        ];
+        
+        for (const altPath of alternatives) {
+          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Trying alternative: ${altPath}`);
+          if (fs.existsSync(altPath)) {
+            if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ Found file at alternative path: ${altPath}`);
+            const stats = fs.statSync(altPath);
+            if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ File exists (${stats.size} bytes), serving: ${altPath}`);
+            callback({ path: altPath });
+            return;
+          }
+        }
+      } else {
+        const stats = fs.statSync(normalizedPath);
+        if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ File exists (${stats.size} bytes), serving: ${normalizedPath}`);
+        callback({ path: normalizedPath });
+        return;
+      }
+      
+      // If we get here, no file was found
+      console.error(`[PROTOCOL] ✗ File not found: ${normalizedPath}`);
+      // Log directory contents for debugging
+      const dirPath = path.dirname(normalizedPath);
+      if (fs.existsSync(dirPath)) {
+        const dirContents = fs.readdirSync(dirPath);
+        console.error(`[PROTOCOL] Directory exists. Contents (${dirContents.length} items):`, dirContents.slice(0, 20).join(', '));
+        
+        // Try to find similar files
+        const similarFiles = dirContents.filter(file => 
+          file.toLowerCase().includes('forces') || 
+          file.toLowerCase().includes('box') ||
+          file.toLowerCase().includes('.png')
+        );
+        if (similarFiles.length > 0) {
+          console.error(`[PROTOCOL] Similar files found:`, similarFiles);
+        }
+      } else {
+        console.error(`[PROTOCOL] Directory does not exist: ${dirPath}`);
+      }
+      callback({ error: -6 }); // FILE_NOT_FOUND
+    } catch (error) {
+      console.error('[PROTOCOL] Error processing request:', error);
+      callback({ error: -6 }); // FILE_NOT_FOUND
+    }
+  });
+  
+  if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Protocol registration ${protocolSuccess ? 'succeeded' : 'failed'}`);
+  
+  if (!protocolSuccess) {
+    console.error('[PROTOCOL] CRITICAL: Protocol registration failed! Images will not load.');
+  } else {
+    if (PROTOCOL_DEBUG) console.log('[PROTOCOL] Protocol handler is ready and waiting for requests...');
+    
+    // Test if the expected image file exists
+    const testImagePath = path.join(process.cwd(), 'Test_Files', 'Science', 'Module 4', 'forces_box.png');
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Testing if image exists at: ${testImagePath}`);
+    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Image exists: ${fs.existsSync(testImagePath)}`);
+    if (fs.existsSync(testImagePath)) {
+      const stats = fs.statSync(testImagePath);
+      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Image file size: ${stats.size} bytes`);
+    }
+    
+    // Test if protocol is actually registered
+    try {
+      const isProtocolRegistered = protocol.isProtocolRegistered('printdown');
+      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Protocol 'printdown' is registered: ${isProtocolRegistered}`);
+    } catch (error) {
+      console.error('[PROTOCOL] Error checking protocol registration:', error);
+    }
+  }
+  
   createWindow();
   
   // Check if app was opened with a file (Windows)
@@ -301,4 +479,18 @@ ipcMain.handle('print', async () => {
       if (!success) console.error('Print failed:', errorType);
     });
   }
+});
+
+ipcMain.handle('clipboard-write', async (_event, text: string) => {
+  try {
+    clipboard.writeText(text);
+    return { success: true };
+  } catch (error) {
+    console.error('Clipboard write failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+ipcMain.handle('get-app-version', async () => {
+  return app.getVersion();
 });

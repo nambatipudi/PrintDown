@@ -20,9 +20,14 @@ declare global {
       onMenuOpen: (callback: () => void) => void;
       onMenuExportPDF: (callback: () => void) => void;
       onMenuPrint: (callback: () => void) => void;
+      onMenuCopyDebugLogs: (callback: () => void) => void;
       onRestoreSession: (callback: (event: any, session: any) => void) => void;
       onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => void;
     };
+    clipboard: {
+      writeText: (text: string) => void;
+    };
+    appVersion: () => Promise<string>;
     MathJax: any;
     mermaid: any;
     Diagram: any;
@@ -400,20 +405,27 @@ function initMermaid(isDarkTheme: boolean = true) {
 
 // Process Mermaid diagrams
 async function processMermaidDiagrams(container: HTMLElement) {
+  console.log('[MERMAID] Starting Mermaid diagram processing');
+  
   if (!window.mermaid) {
-    console.warn('Mermaid is not loaded yet');
+    console.warn('[MERMAID] Mermaid is not loaded yet');
     return;
   }
 
   // Find all code blocks with language "mermaid"
   const mermaidBlocks = container.querySelectorAll('code.language-mermaid');
+  console.log(`[MERMAID] Found ${mermaidBlocks.length} Mermaid diagram blocks`);
   
   for (const block of Array.from(mermaidBlocks)) {
     const pre = block.parentElement;
-    if (!pre || pre.tagName !== 'PRE') continue;
+    if (!pre || pre.tagName !== 'PRE') {
+      console.warn('[MERMAID] Mermaid code block has no pre parent, skipping');
+      continue;
+    }
     
     // Get the diagram code
     const code = block.textContent || '';
+    console.log(`[MERMAID] Processing diagram:\n${code}`);
     
     // Create a container for the diagram
     const diagramId = `mermaid-diagram-${mermaidCounter++}`;
@@ -424,34 +436,45 @@ async function processMermaidDiagrams(container: HTMLElement) {
     
     // Replace the code block with the diagram container
     pre.replaceWith(diagramDiv);
+    console.log(`[MERMAID] Replaced code block with diagram container: ${diagramId}`);
   }
   
   // Render all diagrams
   try {
+    console.log('[MERMAID] Starting Mermaid.run()');
     await window.mermaid.run({
       querySelector: '.mermaid-diagram'
     });
+    console.log('[MERMAID] Mermaid.run() completed successfully');
   } catch (err) {
-    console.error('Mermaid rendering error:', err);
+    console.error('[MERMAID] Mermaid rendering error:', err);
+    console.error('[MERMAID] Error details:', JSON.stringify(err, null, 2));
   }
 }
 
 // Process UML sequence diagrams
 function processUMLSequenceDiagrams(container: HTMLElement) {
+  console.log('[UML] Starting UML sequence diagram processing');
+  
   if (!window.Diagram) {
-    console.warn('js-sequence-diagrams is not loaded yet');
+    console.warn('[UML] js-sequence-diagrams is not loaded yet');
     return;
   }
 
   // Find all code blocks with language "uml-sequence-diagram"
   const umlBlocks = container.querySelectorAll('code.language-uml-sequence-diagram');
+  console.log(`[UML] Found ${umlBlocks.length} UML sequence diagram blocks`);
   
   for (const block of Array.from(umlBlocks)) {
     const pre = block.parentElement;
-    if (!pre || pre.tagName !== 'PRE') continue;
+    if (!pre || pre.tagName !== 'PRE') {
+      console.warn('[UML] UML code block has no pre parent, skipping');
+      continue;
+    }
     
     // Get the diagram code
     const code = block.textContent || '';
+    console.log(`[UML] Processing diagram:\n${code}`);
     
     // Create a container for the diagram
     const diagramDiv = document.createElement('div');
@@ -459,16 +482,23 @@ function processUMLSequenceDiagrams(container: HTMLElement) {
     
     // Replace the code block with the diagram container
     pre.replaceWith(diagramDiv);
+    console.log('[UML] Replaced code block with diagram container');
     
     // Render the diagram
     try {
+      console.log('[UML] Starting Diagram.parse()');
       const diagram = window.Diagram.parse(code);
+      console.log('[UML] Starting drawSVG()');
       diagram.drawSVG(diagramDiv, { theme: 'simple' });
+      console.log('[UML] drawSVG() completed successfully');
     } catch (err) {
-      console.error('UML sequence diagram rendering error:', err);
+      console.error('[UML] UML sequence diagram rendering error:', err);
+      console.error('[UML] Error details:', JSON.stringify(err, null, 2));
       diagramDiv.textContent = 'Error rendering diagram: ' + (err as Error).message;
     }
   }
+  
+  console.log('[UML] UML sequence diagram processing complete');
 }
 
 // Extract math before markdown processing to prevent escaping
@@ -551,6 +581,8 @@ async function renderTab(index: number) {
   
   // If tab hasn't been processed yet, extract math and store it per-tab
   if (!tab.processedContent) {
+    console.log('[MATH] Starting math extraction for tab');
+    
     // Create a temporary store for this tab's math
     const tempMathStore: Map<string, string> = new Map();
     let tempCounter = 0;
@@ -558,71 +590,209 @@ async function renderTab(index: number) {
     // Extract math with a custom implementation that doesn't use global store
     let content = tab.content;
     
-    // Handle bracket-wrapped math on separate lines
-    content = content.replace(/\[\s*\n\s*(\$[^$]+?\$)\s*\n\s*\]/g, '[ $1 ]');
+    // Handle bracket-wrapped math on separate lines: [ \n $ math $ \n ]
+    // Join them into one line: [ $ math $ ]
+    const beforeBracketFix = content;
+    content = content.replace(/\[\s*\n\s*(\$[^$]+?\$)\s*\n\s*\]/g, (match, mathContent) => {
+      console.log('[MATH] Found bracket-wrapped math on separate lines:', match);
+      return `[ ${mathContent} ]`;
+    });
     
     // Extract ```math code blocks (GitHub style) and convert to $$
     content = content.replace(/```math\s*\n([\s\S]+?)\n```/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
       tempMathStore.set(id, `$$${mathContent}$$`);
-      return id;
+      console.log(`[MATH] Extracted math code block [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
     });
     
     // Extract display math $$...$$ and \[...\]
-    content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match) => {
+    content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
       tempMathStore.set(id, match);
-      return id;
+      console.log(`[MATH] Extracted display math $$ [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
     });
     
-    content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match) => {
+    content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match, mathContent) => {
       const id = `MATH_DISPLAY_${tempCounter++}`;
       tempMathStore.set(id, match);
-      return id;
+      console.log(`[MATH] Extracted display math \\[ [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
     });
     
     // Extract inline math with parentheses ( ... ) (GitHub/VS Code style)
+    // Only match if preceded by whitespace or start of line
     content = content.replace(/(^|[\ \t\n\r])(\(\s*\\?[a-zA-Z\\{][^\(\)]*?\s*\))/g, (match, prefix, mathContent) => {
+      // Check if it looks like math (contains backslash or math symbols)
       if (mathContent.includes('\\') || mathContent.match(/[\\{}\^_]/)) {
         const id = `MATH_INLINE_${tempCounter++}`;
+        // Convert to $ syntax
         const cleaned = mathContent.replace(/^\(\s*/, '').replace(/\s*\)$/, '');
         tempMathStore.set(id, `$${cleaned}$`);
-        return prefix + id;
+        console.log(`[MATH] Extracted inline math ( ... ) [${id}]:`, cleaned);
+        // Wrap in HTML comment so Marked doesn't process or remove it
+        return prefix + `<!-- ${id} -->`;
       }
       return match;
     });
     
-    // Extract inline math $...$ (allow any content except dollar signs)
-    content = content.replace(/\$([^\$]+?)\$/g, (match) => {
-      const id = `MATH_INLINE_${tempCounter++}`;
-      tempMathStore.set(id, match);
-      return id;
+    // Extract inline math $...$ (only if it contains LaTeX commands or math operators)
+    // Use non-greedy matching to get the shortest span
+    // Skip plain numbers or text without math symbols
+    content = content.replace(/\$([^\$]+?)\$/g, (match, mathContent) => {
+      // Skip if this contains nested dollar signs (already processed math)
+      if (mathContent.includes('$')) {
+        console.log(`[MATH] Skipped nested $ in:`, mathContent);
+        return match;
+      }
+      
+      // Only treat as math if it contains:
+      // - backslash (LaTeX commands like \times, \div, \text, \dots, etc.)
+      // - math operators (×, ÷, ≠, ≤, ≥)
+      // - subscripts/superscripts (^, _)
+      // - grouping (braces {})
+      // - complex expressions with spaces and operators
+      const isMath = mathContent.includes('\\') || 
+                     mathContent.match(/[×÷≠≤≥\+\-\*\/=<>≤≥±∞∫∑∏√]/) ||
+                     mathContent.includes('^') || 
+                     mathContent.includes('_') ||
+                     mathContent.includes('{') ||
+                     (/\s/.test(mathContent) && /[+\-×÷=]/.test(mathContent));
+      
+      if (isMath) {
+        const id = `MATH_INLINE_${tempCounter++}`;
+        tempMathStore.set(id, match);
+        console.log(`[MATH] Extracted inline math $ [${id}]:`, mathContent);
+        // Wrap in HTML comment so Marked doesn't process or remove it
+        return `<!-- ${id} -->`;
+      } else {
+        // Not math - don't extract, just return as-is
+        console.log(`[MATH] Skipped non-math $:`, mathContent);
+        return match;
+      }
     });
     
     // Extract inline math \(...\) (LaTeX style)
-    content = content.replace(/\\\((.+?)\\\)/g, (match) => {
+    content = content.replace(/\\\((.+?)\\\)/g, (match, mathContent) => {
       const id = `MATH_INLINE_${tempCounter++}`;
       tempMathStore.set(id, match);
-      return id;
+      console.log(`[MATH] Extracted inline math \\( ... \\) [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
     });
+    
+    // Extract square bracket inline math: [ $...$ ] (VS Code style display math)
+    // This should be treated as display math, not inline
+    content = content.replace(/\[\s*\$([^$]+?)\$\s*\]/g, (match, mathContent) => {
+      const id = `MATH_DISPLAY_${tempCounter++}`;
+      tempMathStore.set(id, `$$${mathContent}$$`);
+      console.log(`[MATH] Extracted square bracket math [${id}]:`, mathContent);
+      // Wrap in HTML comment so Marked doesn't process or remove it
+      return `<!-- ${id} -->`;
+    });
+    
+    console.log(`[MATH] Extraction complete. Total math expressions: ${tempMathStore.size}`);
+    console.log('[MATH] Math store contents:', Array.from(tempMathStore.entries()));
     
     tab.processedContent = content;
     tab.mathStore = tempMathStore;
   }
   
   // Process markdown
+  console.log('[MARKDOWN] Starting Marked.parse()');
   let html = marked.parse(tab.processedContent) as string;
   
   // Restore math from this tab's store
   if (tab.mathStore) {
+    console.log('[MATH] Starting math restoration');
+    console.log(`[MATH] Restoring ${tab.mathStore.size} math expressions`);
+    
+    // Debug: log a sample of the HTML to see what Marked produced
+    const htmlSample = html.substring(0, 500);
+    console.log('[MATH] HTML sample after Marked (first 500 chars):', htmlSample);
+    
+    let restoredCount = 0;
+    let failedCount = 0;
     tab.mathStore.forEach((math, id) => {
-      const regex = new RegExp(id, 'g');
-      html = html.replace(regex, math);
+      // Try multiple patterns: HTML comment wrapper, plain ID, HTML-encoded ID, etc.
+      const patterns = [
+        new RegExp(`<!--\\s*${id}\\s*-->`, 'g'),  // HTML comment wrapper (our new format)
+        new RegExp(id, 'g'),  // Plain ID (old format, for backward compatibility)
+        new RegExp(id.replace(/_/g, '&#95;'), 'g'),  // Underscores HTML-encoded
+        new RegExp(`<code>${id}</code>`, 'g'),  // ID in code tags
+        new RegExp(`&lt;${id}&gt;`, 'g'),  // ID in escaped tags
+      ];
+      
+      let restored = false;
+      for (const regex of patterns) {
+        const beforeRestore = html;
+        html = html.replace(regex, math);
+        if (beforeRestore !== html) {
+          restored = true;
+          break;
+        }
+      }
+      
+      if (restored) {
+        restoredCount++;
+        console.log(`[MATH] Restored [${id}]:`, math.substring(0, 50) + (math.length > 50 ? '...' : ''));
+      } else {
+        failedCount++;
+        // Check if the ID appears in the HTML at all (even if we can't replace it)
+        const found = html.includes(id) || html.includes(`<!-- ${id} -->`) || html.includes(id.replace(/_/g, '&#95;'));
+        console.warn(`[MATH] Failed to restore [${id}], not found in HTML. ID appears (plain): ${html.includes(id)}, ID appears (comment): ${html.includes(`<!-- ${id} -->`)}`);
+        if (!found && tab.mathStore) {
+          // Log a sample of where similar IDs might be
+          const similarIds = Array.from(tab.mathStore.keys()).slice(0, 5);
+          console.warn(`[MATH] Sample IDs in store:`, similarIds);
+        }
+      }
+    });
+    console.log(`[MATH] Restoration complete: ${restoredCount} restored, ${failedCount} failed`);
+  }
+  
+  // Post-restoration check: look for any remaining unrendered math
+  // This catches cases where markdown processing might have escaped math
+  const suspiciousMath = html.match(/\\?\\[\[(.*?)\\\]\\]/g) || html.match(/\[\\?\$.*?\\?\$\]/g);
+  if (suspiciousMath && suspiciousMath.length > 0) {
+    console.warn('[MATH] Found potentially escaped/unrendered math after restoration:');
+    suspiciousMath.forEach(m => console.warn('  -', m));
+  }
+  
+  // Convert relative image paths to use the custom protocol
+  // This allows Electron to load images from the same directory as the markdown file
+  if (tab.filePath) {
+    // Get directory path (handle both / and \ as separators)
+    const pathParts = tab.filePath.split(/[/\\]/);
+    pathParts.pop(); // Remove filename
+    const baseDir = pathParts.join('/'); // Rejoin with forward slashes
+    console.log('[IMAGE] Base directory:', baseDir);
+    
+    html = html.replace(/<img([^>]*?)src="([^"]*?)"/g, (match, attrs, src) => {
+      // Skip absolute URLs (http://, https://, data:, printdown:)
+      if (src.match(/^(https?:|data:|printdown:)/)) {
+        return match;
+      }
+      
+      // For relative paths, convert to absolute using the custom protocol
+      const absolutePath = `${baseDir}/${src}`.replace(/\/+/g, '/'); // Normalize multiple slashes
+      // Remove any leading slashes from absolutePath as the protocol already provides them
+      const cleanPath = absolutePath.replace(/^\/+/, '');
+      const imageUrl = `printdown:///${cleanPath}`;
+      console.log('[IMAGE] Converting:', src, '→', imageUrl);
+      // Add error handler to debug image loading issues
+      return `<img${attrs}src="${imageUrl}" onerror="console.error('[IMAGE] Failed to load:', this.src); console.error('[IMAGE] Error details:', event);"`;
     });
   }
   
   // Set the HTML
   contentDiv.innerHTML = html;
+  
+  // No-op delay previously used for protocol tests has been removed
   contentDiv.style.display = 'block';
   emptyState.style.display = 'none';
 
@@ -637,12 +807,38 @@ async function renderTab(index: number) {
     // Typeset math with MathJax
     if (window.MathJax && window.MathJax.typesetPromise) {
       try {
+        console.log('[MATHJAX] Starting MathJax.typesetPromise()');
+        console.log('[MATHJAX] MathJax version:', window.MathJax.version);
+        console.log('[MATHJAX] Content div has HTML length:', contentDiv.innerHTML.length);
+        
         await window.MathJax.typesetPromise([contentDiv]);
+        console.log('[MATHJAX] typesetPromise completed');
+        
         // Give MathJax a bit more time to complete DOM updates
         await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Log information about what was rendered
+        const mathContainers = contentDiv.querySelectorAll('mjx-container');
+        console.log(`[MATHJAX] Successfully rendered ${mathContainers.length} math expressions`);
+        mathContainers.forEach((container, index) => {
+          const content = container.textContent || '';
+          console.log(`[MATHJAX] Rendered math [${index}]:`, content);
+        });
+        
+        // Check for any text that might look like unrendered math
+        const mathElements = contentDiv.querySelectorAll('.MathJax, mjx-container');
+        const allText = contentDiv.textContent || '';
+        const suspiciousPatterns = allText.match(/[\\][\w\{\}^_]+/g);
+        if (suspiciousPatterns && suspiciousPatterns.length > 0) {
+          console.warn('[MATHJAX] Found potential unrendered LaTeX commands:', suspiciousPatterns);
+        }
       } catch (err) {
-        console.error('MathJax typeset error:', err);
+        console.error('[MATHJAX] MathJax typeset error:', err);
+        console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
       }
+    } else {
+      console.warn('[MATHJAX] MathJax not available or typesetPromise not found');
+      console.warn('[MATHJAX] window.MathJax:', window.MathJax);
     }
     
     tab.isRendered = true;
@@ -768,10 +964,134 @@ function print() {
   }
 }
 
+// Store console logs for debug copying with tab information
+interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  tabIndex: number | null;
+}
+const consoleLogs: LogEntry[] = [];
+const originalConsole = {
+  log: console.log,
+  warn: console.warn,
+  error: console.error,
+  info: console.info
+};
+
+// Helper function to get current tab index
+function getCurrentTabIndex(): number | null {
+  return activeTabIndex >= 0 ? activeTabIndex : null;
+}
+
+// Override console methods to capture logs with tab information
+console.log = (...args: any[]) => {
+  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  consoleLogs.push({
+    timestamp: new Date().toISOString(),
+    level: 'LOG',
+    message,
+    tabIndex: getCurrentTabIndex()
+  });
+  originalConsole.log(...args);
+};
+
+console.warn = (...args: any[]) => {
+  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  consoleLogs.push({
+    timestamp: new Date().toISOString(),
+    level: 'WARN',
+    message,
+    tabIndex: getCurrentTabIndex()
+  });
+  originalConsole.warn(...args);
+};
+
+console.error = (...args: any[]) => {
+  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  consoleLogs.push({
+    timestamp: new Date().toISOString(),
+    level: 'ERROR',
+    message,
+    tabIndex: getCurrentTabIndex()
+  });
+  originalConsole.error(...args);
+};
+
+console.info = (...args: any[]) => {
+  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  consoleLogs.push({
+    timestamp: new Date().toISOString(),
+    level: 'INFO',
+    message,
+    tabIndex: getCurrentTabIndex()
+  });
+  originalConsole.info(...args);
+};
+
+async function copyDebugLogs() {
+  // Get app version
+  const appVersion = await window.appVersion();
+  
+  // Filter logs for the active tab only
+  const activeTabLogs = activeTabIndex >= 0 
+    ? consoleLogs.filter(log => log.tabIndex === activeTabIndex || log.tabIndex === null)
+    : consoleLogs;
+  
+  // Format logs as strings
+  const formattedLogs = activeTabLogs.slice(-500).map(log => {
+    const tabInfo = log.tabIndex !== null ? `[Tab ${log.tabIndex}]` : '[Global]';
+    return `[${log.level}] ${log.timestamp} ${tabInfo} ${log.message}`;
+  });
+  
+  const debugInfo = [
+    '=== PrintDown Debug Logs ===',
+    `Generated: ${new Date().toISOString()}`,
+    `App Version: ${appVersion}`,
+    '',
+    'Environment:',
+    `User Agent: ${navigator.userAgent}`,
+    `Platform: ${navigator.platform}`,
+    '',
+    'Active Tab:',
+    activeTabIndex >= 0 
+      ? `Index: ${activeTabIndex}, File: ${tabs[activeTabIndex]?.filePath || 'N/A'}` 
+      : 'No active tab',
+    '',
+    'MathJax Info:',
+    `Available: ${window.MathJax ? 'Yes' : 'No'}`,
+    `Version: ${window.MathJax?.version || 'N/A'}`,
+    '',
+    'Mermaid Info:',
+    `Available: ${window.mermaid ? 'Yes' : 'No'}`,
+    `Version: ${window.mermaid?.version || 'N/A'}`,
+    '',
+    'UML Info:',
+    `Available: ${window.Diagram ? 'Yes' : 'No'}`,
+    '',
+    'Console Logs (Active Tab Only):',
+    '---',
+    ...formattedLogs,
+    '---',
+    '',
+    `Logs for this tab: ${activeTabLogs.length}`,
+    `Total logs captured: ${consoleLogs.length}`
+  ].join('\n');
+  
+  await window.clipboard.writeText(debugInfo);
+  console.log(`[DEBUG] Debug logs copied to clipboard (App v${appVersion}, Tab ${activeTabIndex >= 0 ? activeTabIndex : 'N/A'})`);
+}
+
+// Log app version on startup
+window.appVersion().then(version => {
+  console.log(`[APP] PrintDown renderer loaded, version: ${version}`);
+});
+
 // Event listeners
 window.menuEvents.onMenuOpen(openFile);
 window.menuEvents.onMenuExportPDF(exportPDF);
 window.menuEvents.onMenuPrint(print);
+window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
 
 // Handle files opened from system (double-click on .md file)
 window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => {
@@ -1027,6 +1347,26 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
+
+// Responsive on-screen styles: scale images and diagrams to container/window
+const screenStyle = document.createElement('style');
+screenStyle.textContent = `
+  #markdown-content img {
+    max-width: 100%;
+    max-height: 80vh; /* keep within viewport height */
+    height: auto;
+    width: auto;
+    display: block;
+    margin: 12px auto; /* center and add breathing room */
+  }
+
+  #markdown-content .mermaid-diagram svg,
+  #markdown-content .uml-sequence-diagram svg {
+    max-width: 100%;
+    height: auto;
+  }
+`;
+document.head.appendChild(screenStyle);
 
 // PDF Export Handshake - Wait for all async rendering to complete
 if ((window as any).ipc) {

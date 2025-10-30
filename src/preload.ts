@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('menuEvents', {
     ipcRenderer.removeAllListeners('menu-print');
     ipcRenderer.on('menu-print', callback);
   },
+  onMenuCopyDebugLogs: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-copy-debug-logs');
+    ipcRenderer.on('menu-copy-debug-logs', callback);
+  },
   onRestoreSession: (callback: (event: any, session: any) => void) => {
     ipcRenderer.removeAllListeners('restore-session');
     ipcRenderer.on('restore-session', callback);
@@ -57,6 +61,18 @@ contextBridge.exposeInMainWorld('menuEvents', {
     ipcRenderer.removeAllListeners('open-file-from-system');
     ipcRenderer.on('open-file-from-system', callback);
   }
+});
+
+// Expose clipboard API via IPC
+contextBridge.exposeInMainWorld('clipboard', {
+  writeText: async (text: string) => {
+    return await ipcRenderer.invoke('clipboard-write', text);
+  }
+});
+
+// Expose app version
+contextBridge.exposeInMainWorld('appVersion', async () => {
+  return await ipcRenderer.invoke('get-app-version');
 });
 
 // Expose IPC communication for PDF export handshake
