@@ -1,4 +1,5 @@
-import { Marked } from 'marked';
+import MarkdownIt from 'markdown-it';
+import texmath from 'markdown-it-texmath';
 
 // Declare the APIs exposed by preload script
 declare global {
@@ -17,12 +18,10 @@ declare global {
     };
     printExport: {
       exportPDF: (filePath: string, themeData?: any) => Promise<string | null>;
-      print: () => Promise<void>;
     };
     menuEvents: {
       onMenuOpen: (callback: () => void) => void;
       onMenuExportPDF: (callback: () => void) => void;
-      onMenuPrint: (callback: () => void) => void;
       onMenuCopyDebugLogs: (callback: () => void) => void;
       onRestoreSession: (callback: (event: any, session: any) => void) => void;
       onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => void;
@@ -32,6 +31,9 @@ declare global {
       onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
       onMenuToggleTOC: (callback: () => void) => void;
     };
+      themeAPI: {
+        setCurrentTheme: (themeName: string) => Promise<void>;
+      };
     clipboard: {
       writeText: (text: string) => void;
     };
@@ -46,8 +48,6 @@ interface Tab {
   filePath: string;
   content: string;
   title: string;
-  processedContent?: string; // Content after extractMath (with placeholders)
-  mathStore?: Map<string, string>; // Store math expressions per tab
   isRendered?: boolean; // Track if tab has been rendered
   tocItems?: TOCItem[]; // Table of contents items
 }
@@ -63,10 +63,24 @@ const tabs: Tab[] = [];
 let activeTabIndex = -1;
 let sessionRestored = false; // Flag to prevent multiple session restorations
 
-const marked = new Marked({
+// Initialize markdown-it with texmath plugin for VS Code-style math rendering
+const md = new MarkdownIt({
+  html: true,
   breaks: true,
-  gfm: true,
-  async: false
+  linkify: true,
+  typographer: true
+}).use(texmath, {
+  engine: {
+    // Custom engine that preserves LaTeX for MathJax to render
+    renderToString(tex: string, options: any) {
+      // texmath passes display:true for block math, false for inline
+      if (options && options.display) {
+        return `$$${tex}$$`;
+      }
+      return `$${tex}$`;
+    }
+  },
+  delimiters: ['dollars', 'brackets', 'gitlab', 'julia', 'kramdown'], // Support all common delimiters
 });
 
 // Declare MathJax window object
@@ -75,6 +89,9 @@ declare global {
     MathJax: any;
   }
 }
+
+// Track current theme
+let currentThemeName: keyof typeof themes = 'dark';
 
 // Theme definitions
 const themes = {
@@ -337,6 +354,8 @@ const themes = {
 };
 
 function applyTheme(themeName: keyof typeof themes) {
+  currentThemeName = themeName; // Track current theme
+    window.themeAPI.setCurrentTheme(themeName); // Notify main process
   const theme = themes[themeName];
   
   // Only apply theme to the content area, not the whole app
@@ -401,18 +420,8 @@ function applyTheme(themeName: keyof typeof themes) {
   localStorage.setItem('selectedTheme', themeName);
 }
 
-// Store for math placeholders
-const mathStore: Map<string, string> = new Map();
-let mathCounter = 0;
-
 // Mermaid diagram counter
 let mermaidCounter = 0;
-
-// Normalize TeX before sending to MathJax (tweak rendering consistency)
-function normalizeMathTex(tex: string): string {
-  // Prefer \ldots (ellipsis on baseline) for compact dots
-  return tex.replace(/\\dots/g, '\\ldots');
-}
 
 // Initialize Mermaid
 function initMermaid(isDarkTheme: boolean = true) {
@@ -524,74 +533,7 @@ function processUMLSequenceDiagrams(container: HTMLElement) {
   console.log('[UML] UML sequence diagram processing complete');
 }
 
-// Extract math before markdown processing to prevent escaping
-function extractMath(content: string): string {
-  mathStore.clear();
-  mathCounter = 0;
-  
-  // Handle bracket-wrapped math on separate lines: [ \n $ math $ \n ]
-  // Join them into one line: [ $ math $ ]
-  content = content.replace(/\[\s*\n\s*(\$[^$]+?\$)\s*\n\s*\]/g, '[ $1 ]');
-  
-  // Extract ```math code blocks (GitHub style) and convert to $$
-  content = content.replace(/```math\s*\n([\s\S]+?)\n```/g, (match, mathContent) => {
-    const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
-    return id;
-  });
-  
-  // Extract display math $$...$$ and \[...\]
-  content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match) => {
-    const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, normalizeMathTex(match));
-    return id;
-  });
-  
-  content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match) => {
-    const id = `MATH_DISPLAY_${mathCounter++}`;
-    mathStore.set(id, normalizeMathTex(match));
-    return id;
-  });
-  
-  // Extract inline math with parentheses ( ... ) (GitHub/VS Code style)
-  // Only match if preceded by whitespace or start of line
-  content = content.replace(/(^|[\ \t\n\r])(\(\s*\\?[a-zA-Z\\{][^\(\)]*?\s*\))/g, (match, prefix, mathContent) => {
-    // Check if it looks like math (contains backslash or math symbols)
-    if (mathContent.includes('\\') || mathContent.match(/[\\{}\^_]/)) {
-      const id = `MATH_INLINE_${mathCounter++}`;
-      // Convert to $ syntax
-      const cleaned = mathContent.replace(/^\(\s*/, '').replace(/\s*\)$/, '');
-      mathStore.set(id, `$${cleaned}$`);
-      return prefix + id;
-    }
-    return match;
-  });
-  
-  // Extract inline math $...$ (allow any content except dollar signs)
-  // Use non-greedy matching to get the shortest span
-  content = content.replace(/\$([^\$]+?)\$/g, (match) => {
-    const id = `MATH_INLINE_${mathCounter++}`;
-    mathStore.set(id, match);
-    return id;
-  });
-  
-  // Extract inline math \(...\) (LaTeX style)
-  content = content.replace(/\\\((.+?)\\\)/g, (match) => {
-    const id = `MATH_INLINE_${mathCounter++}`;
-    mathStore.set(id, match);
-    return id;
-  });
-  
-  return content;
-}
-
-// Restore math after markdown processing
-function restoreMath(html: string): string {
-  mathStore.forEach((math, id) => {
-    html = html.replace(id, math);
-  });
-  return html;
-}
+// Note: Math extraction/restoration functions removed - markdown-it-texmath handles this now
 
 async function renderTab(index: number) {
   activeTabIndex = index;
@@ -602,191 +544,10 @@ async function renderTab(index: number) {
   const contentDiv = document.getElementById('markdown-content')!;
   const emptyState = document.querySelector('.empty-state') as HTMLElement;
   
-  // If tab hasn't been processed yet, extract math and store it per-tab
-  if (!tab.processedContent) {
-    console.log('[MATH] Starting math extraction for tab');
-    
-    // Create a temporary store for this tab's math
-    const tempMathStore: Map<string, string> = new Map();
-    let tempCounter = 0;
-    
-    // Extract math with a custom implementation that doesn't use global store
-    let content = tab.content;
-    
-    // Handle bracket-wrapped math on separate lines: [ \n $ math $ \n ]
-    // Join them into one line: [ $ math $ ]
-    const beforeBracketFix = content;
-    content = content.replace(/\[\s*\n\s*(\$[^$]+?\$)\s*\n\s*\]/g, (match, mathContent) => {
-      console.log('[MATH] Found bracket-wrapped math on separate lines:', match);
-      return `[ ${mathContent} ]`;
-    });
-
-    // Extract square bracket inline math: [ $...$ ] (VS Code style display math)
-    // Do this BEFORE generic inline $...$ extraction so the inner dollars are not consumed first
-    content = content.replace(/\[\s*\$([^$]+?)\$\s*\]/g, (match, mathContent) => {
-      const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
-      console.log(`[MATH] Extracted square bracket math [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
-    
-    // Extract ```math code blocks (GitHub style) and convert to $$
-    content = content.replace(/```math\s*\n([\s\S]+?)\n```/g, (match, mathContent) => {
-      const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, `$$${normalizeMathTex(mathContent)}$$`);
-      console.log(`[MATH] Extracted math code block [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
-    
-    // Extract display math $$...$$ and \[...\]
-    content = content.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-      const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, normalizeMathTex(match));
-      console.log(`[MATH] Extracted display math $$ [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
-    
-    content = content.replace(/\\\[([\s\S]+?)\\\]/g, (match, mathContent) => {
-      const id = `MATH_DISPLAY_${tempCounter++}`;
-      tempMathStore.set(id, normalizeMathTex(match));
-      console.log(`[MATH] Extracted display math \\[ [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
-    
-    // Extract inline math with parentheses ( ... ) (GitHub/VS Code style)
-    // Only match if preceded by whitespace or start of line
-    content = content.replace(/(^|[\ \t\n\r])(\(\s*\\?[a-zA-Z\\{][^\(\)]*?\s*\))/g, (match, prefix, mathContent) => {
-      // Check if it looks like math (contains backslash or math symbols)
-      if (mathContent.includes('\\') || mathContent.match(/[\\{}\^_]/)) {
-        const id = `MATH_INLINE_${tempCounter++}`;
-        // Convert to $ syntax
-        const cleaned = mathContent.replace(/^\(\s*/, '').replace(/\s*\)$/, '');
-        tempMathStore.set(id, normalizeMathTex(`$${cleaned}$`));
-        console.log(`[MATH] Extracted inline math ( ... ) [${id}]:`, cleaned);
-        // Wrap in HTML comment so Marked doesn't process or remove it
-        return prefix + `<!-- ${id} -->`;
-      }
-      return match;
-    });
-    
-    // Extract inline math $...$ (only if it contains LaTeX commands or math operators)
-    // Use non-greedy matching to get the shortest span
-    // Skip plain numbers or text without math symbols
-    content = content.replace(/\$([^\$]+?)\$/g, (match, mathContent) => {
-      // Skip if this contains nested dollar signs (already processed math)
-      if (mathContent.includes('$')) {
-        console.log(`[MATH] Skipped nested $ in:`, mathContent);
-        return match;
-      }
-      
-      // Only treat as math if it contains:
-      // - backslash (LaTeX commands like \times, \div, \text, \dots, etc.)
-      // - math operators (×, ÷, ≠, ≤, ≥)
-      // - subscripts/superscripts (^, _)
-      // - grouping (braces {})
-      // - complex expressions with spaces and operators
-      const isMath = mathContent.includes('\\') || 
-                     mathContent.match(/[×÷≠≤≥\+\-\*\/=<>≤≥±∞∫∑∏√]/) ||
-                     mathContent.includes('^') || 
-                     mathContent.includes('_') ||
-                     mathContent.includes('{') ||
-                     (/\s/.test(mathContent) && /[+\-×÷=]/.test(mathContent));
-      
-      if (isMath) {
-        const id = `MATH_INLINE_${tempCounter++}`;
-        tempMathStore.set(id, normalizeMathTex(match));
-        console.log(`[MATH] Extracted inline math $ [${id}]:`, mathContent);
-        // Wrap in HTML comment so Marked doesn't process or remove it
-        return `<!-- ${id} -->`;
-      } else {
-        // Not math - don't extract, just return as-is
-        console.log(`[MATH] Skipped non-math $:`, mathContent);
-        return match;
-      }
-    });
-    
-    // Extract inline math \(...\) (LaTeX style)
-    content = content.replace(/\\\((.+?)\\\)/g, (match, mathContent) => {
-      const id = `MATH_INLINE_${tempCounter++}`;
-      tempMathStore.set(id, normalizeMathTex(match));
-      console.log(`[MATH] Extracted inline math \\( ... \\) [${id}]:`, mathContent);
-      // Wrap in HTML comment so Marked doesn't process or remove it
-      return `<!-- ${id} -->`;
-    });
-    
-    // (square bracket math extracted earlier)
-    
-    console.log(`[MATH] Extraction complete. Total math expressions: ${tempMathStore.size}`);
-    console.log('[MATH] Math store contents:', Array.from(tempMathStore.entries()));
-    
-    tab.processedContent = content;
-    tab.mathStore = tempMathStore;
-  }
-  
-  // Process markdown
-  console.log('[MARKDOWN] Starting Marked.parse()');
-  let html = marked.parse(tab.processedContent) as string;
-  
-  // Restore math from this tab's store
-  if (tab.mathStore) {
-    console.log('[MATH] Starting math restoration');
-    console.log(`[MATH] Restoring ${tab.mathStore.size} math expressions`);
-    
-    // Debug: log a sample of the HTML to see what Marked produced
-    const htmlSample = html.substring(0, 500);
-    console.log('[MATH] HTML sample after Marked (first 500 chars):', htmlSample);
-    
-    let restoredCount = 0;
-    let failedCount = 0;
-    tab.mathStore.forEach((math, id) => {
-      // Try multiple patterns: HTML comment wrapper, plain ID, HTML-encoded ID, etc.
-      const patterns = [
-        new RegExp(`<!--\\s*${id}\\s*-->`, 'g'),  // HTML comment wrapper (our new format)
-        new RegExp(id, 'g'),  // Plain ID (old format, for backward compatibility)
-        new RegExp(id.replace(/_/g, '&#95;'), 'g'),  // Underscores HTML-encoded
-        new RegExp(`<code>${id}</code>`, 'g'),  // ID in code tags
-        new RegExp(`&lt;${id}&gt;`, 'g'),  // ID in escaped tags
-      ];
-      
-      let restored = false;
-      for (const regex of patterns) {
-        const beforeRestore = html;
-        html = html.replace(regex, math);
-        if (beforeRestore !== html) {
-          restored = true;
-          break;
-        }
-      }
-      
-      if (restored) {
-        restoredCount++;
-        console.log(`[MATH] Restored [${id}]:`, math.substring(0, 50) + (math.length > 50 ? '...' : ''));
-      } else {
-        failedCount++;
-        // Check if the ID appears in the HTML at all (even if we can't replace it)
-        const found = html.includes(id) || html.includes(`<!-- ${id} -->`) || html.includes(id.replace(/_/g, '&#95;'));
-        console.warn(`[MATH] Failed to restore [${id}], not found in HTML. ID appears (plain): ${html.includes(id)}, ID appears (comment): ${html.includes(`<!-- ${id} -->`)}`);
-        if (!found && tab.mathStore) {
-          // Log a sample of where similar IDs might be
-          const similarIds = Array.from(tab.mathStore.keys()).slice(0, 5);
-          console.warn(`[MATH] Sample IDs in store:`, similarIds);
-        }
-      }
-    });
-    console.log(`[MATH] Restoration complete: ${restoredCount} restored, ${failedCount} failed`);
-  }
-  
-  // Post-restoration check: look for any remaining unrendered math
-  // This catches cases where markdown processing might have escaped math
-  const suspiciousMath = html.match(/\\?\\[\[(.*?)\\\]\\]/g) || html.match(/\[\\?\$.*?\\?\$\]/g);
-  if (suspiciousMath && suspiciousMath.length > 0) {
-    console.warn('[MATH] Found potentially escaped/unrendered math after restoration:');
-    suspiciousMath.forEach(m => console.warn('  -', m));
-  }
+  // Process markdown with markdown-it (no manual math extraction needed!)
+  console.log('[MARKDOWN] Starting markdown-it rendering');
+  let html = md.render(tab.content);
+  console.log('[MARKDOWN] Rendering complete');
   
   // Convert relative image paths to use the custom protocol
   // This allows Electron to load images from the same directory as the markdown file
@@ -1256,10 +1017,17 @@ function closeTab(index: number) {
     const emptyState = document.querySelector('.empty-state') as HTMLElement;
     contentDiv.style.display = 'none';
     emptyState.style.display = 'flex';
+    // Clear TOC when no documents are open
+    const tocContent = document.getElementById('toc-content');
+    if (tocContent) {
+      tocContent.innerHTML = '<div class="toc-empty">No document open</div>';
+    }
   } else if (index === activeTabIndex) {
     renderTab(Math.min(index, tabs.length - 1));
   } else if (index < activeTabIndex) {
     activeTabIndex--;
+    // Regenerate TOC for newly shifted active tab
+    generateTOC();
   }
   
   updateTabUI();
@@ -1273,6 +1041,11 @@ function closeAllTabs() {
   const emptyState = document.querySelector('.empty-state') as HTMLElement;
   contentDiv.style.display = 'none';
   emptyState.style.display = 'flex';
+  // Clear TOC fully
+  const tocContent = document.getElementById('toc-content');
+  if (tocContent) {
+    tocContent.innerHTML = '<div class="toc-empty">No document open</div>';
+  }
   updateTabUI();
   saveSession(); // This will save an empty session, preventing unwanted restoration
 }
@@ -1323,7 +1096,9 @@ async function openFile() {
 function saveSession() {
   window.session.save({
     openFiles: tabs.map(t => t.filePath),
-    activeIndex: activeTabIndex
+     activeIndex: activeTabIndex,
+     theme: currentThemeName,
+     fontSizeFactor: fontSizeFactor
   });
 }
 
@@ -1331,9 +1106,10 @@ async function exportPDF() {
   if (activeTabIndex >= 0) {
     const tab = tabs[activeTabIndex];
     
-    // Get the current theme data
-    const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
-    const currentTheme = themes[themeSelect.value as keyof typeof themes];
+    // Use the currently active theme
+    console.log('[PDF] Current theme name:', currentThemeName);
+    console.log('[PDF] Current theme data:', themes[currentThemeName]);
+    const currentTheme = themes[currentThemeName];
     
     const savePath = await window.printExport.exportPDF(tab.filePath, currentTheme);
     
@@ -1341,12 +1117,6 @@ async function exportPDF() {
       // PDF saved successfully
       console.log('PDF saved to:', savePath);
     }
-  }
-}
-
-function print() {
-  if (activeTabIndex >= 0) {
-    window.print();
   }
 }
 
@@ -1476,7 +1246,6 @@ window.appVersion().then(version => {
 // Event listeners
 window.menuEvents.onMenuOpen(openFile);
 window.menuEvents.onMenuExportPDF(exportPDF);
-window.menuEvents.onMenuPrint(print);
 window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
 
 // Font size menu events
@@ -1548,6 +1317,46 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     return;
   }
   
+    // Restore theme and font size from session, or use saved values, or detect system preference
+    let themeToApply: keyof typeof themes;
+    let fontFactorToApply: number;
+  
+    if (session.theme) {
+      // Use theme from session
+      themeToApply = session.theme as keyof typeof themes;
+      console.log('[SESSION] Restoring theme from session:', themeToApply);
+    } else {
+      // Check localStorage, then system preference
+      const savedTheme = localStorage.getItem('selectedTheme');
+      if (savedTheme) {
+        themeToApply = savedTheme as keyof typeof themes;
+        console.log('[SESSION] Using theme from localStorage:', themeToApply);
+      } else {
+        // Detect system theme preference
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        themeToApply = prefersDark ? 'dark' : 'light';
+        console.log('[SESSION] Detected system theme preference:', themeToApply);
+      }
+    }
+  
+    if (session.fontSizeFactor !== undefined) {
+      fontFactorToApply = session.fontSizeFactor;
+      console.log('[SESSION] Restoring font size factor from session:', fontFactorToApply);
+    } else {
+      fontFactorToApply = 1.0; // Default
+      console.log('[SESSION] Using default font size factor:', fontFactorToApply);
+    }
+  
+    // Apply theme
+    currentThemeName = themeToApply;
+    const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
+    initMermaid(isDarkTheme);
+    applyTheme(themeToApply);
+  
+    // Apply font size
+    fontSizeFactor = fontFactorToApply;
+    applyFontSizeFactor(fontSizeFactor);
+  
   if (session.openFiles && session.openFiles.length > 0) {
     console.log('[SESSION] Restoring session with', session.openFiles.length, 'files');
     sessionRestored = true; // Mark as restored to prevent future restorations
@@ -1573,14 +1382,7 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
   }
 });
 
-// Initialize theme
-const savedTheme = localStorage.getItem('selectedTheme') || 'dark';
-
-// Initialize Mermaid with theme before applying theme
-const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(savedTheme);
-initMermaid(isDarkTheme);
-
-applyTheme(savedTheme as keyof typeof themes);
+// Theme will be initialized either from session restore or after page load
 
 // Font size management with scaling factor
 let fontSizeFactor = 1.0; // Default scale factor
@@ -1940,6 +1742,44 @@ document.addEventListener('DOMContentLoaded', () => {
     if (markdownFiles.length === 0 && files.length > 0) {
       console.warn('Only .md and .markdown files are supported');
       // You could show a user-friendly notification here
+
+// Initialize theme and font size after a short delay to allow session restore to complete
+setTimeout(() => {
+  if (!sessionRestored) {
+    console.log('[INIT] No session restored, initializing with defaults');
+    
+    // Get theme from localStorage or detect system preference
+    const savedTheme = localStorage.getItem('selectedTheme');
+    let themeToApply: keyof typeof themes;
+    
+    if (savedTheme) {
+      themeToApply = savedTheme as keyof typeof themes;
+      console.log('[INIT] Using theme from localStorage:', themeToApply);
+    } else {
+      // Detect system theme preference
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      themeToApply = prefersDark ? 'dark' : 'light';
+      console.log('[INIT] Detected system theme preference:', themeToApply);
+    }
+    
+    // Apply theme
+    currentThemeName = themeToApply;
+    const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
+    initMermaid(isDarkTheme);
+    applyTheme(themeToApply);
+    
+    // Get font size from localStorage or use default
+    const savedFontFactor = localStorage.getItem('fontSizeFactor');
+    if (savedFontFactor) {
+      fontSizeFactor = parseFloat(savedFontFactor);
+      console.log('[INIT] Using font size factor from localStorage:', fontSizeFactor);
+    } else {
+      fontSizeFactor = 1.0;
+      console.log('[INIT] Using default font size factor:', fontSizeFactor);
+    }
+    applyFontSizeFactor(fontSizeFactor);
+  }
+}, 100);
     }
   });
 });

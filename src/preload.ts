@@ -36,9 +36,6 @@ contextBridge.exposeInMainWorld('session', {
 contextBridge.exposeInMainWorld('printExport', {
   exportPDF: async (filePath: string, themeData?: any) => {
     return await ipcRenderer.invoke('export-pdf', filePath, themeData);
-  },
-  print: async () => {
-    return await ipcRenderer.invoke('print');
   }
 });
 
@@ -51,10 +48,6 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuExportPDF: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-export-pdf');
     ipcRenderer.on('menu-export-pdf', callback);
-  },
-  onMenuPrint: (callback: () => void) => {
-    ipcRenderer.removeAllListeners('menu-print');
-    ipcRenderer.on('menu-print', callback);
   },
   onMenuCopyDebugLogs: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-copy-debug-logs');
@@ -94,6 +87,13 @@ contextBridge.exposeInMainWorld('menuEvents', {
 contextBridge.exposeInMainWorld('clipboard', {
   writeText: async (text: string) => {
     return await ipcRenderer.invoke('clipboard-write', text);
+  }
+});
+
+// Expose theme API
+contextBridge.exposeInMainWorld('themeAPI', {
+  setCurrentTheme: async (themeName: string) => {
+    return await ipcRenderer.invoke('set-current-theme', themeName);
   }
 });
 

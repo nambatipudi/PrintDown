@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, protocol, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import Store from 'electron-store';
@@ -6,12 +6,15 @@ import Store from 'electron-store';
 interface SessionData {
   openFiles: string[];
   activeIndex: number;
+  theme?: string;
+  fontSizeFactor?: number;
 }
 
 const store = new Store<{ session: SessionData }>();
 
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
+let currentTheme: string = 'dark'; // Track current theme
   
   // Toggle to enable/disable verbose protocol logging
   const PROTOCOL_DEBUG = false;
@@ -39,6 +42,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    title: 'PrintDown',  // Set window title (appears in print dialog)
     icon: path.join(__dirname, '../icon.png'),
     backgroundColor: '#1e1e1e', // Set explicit background color to prevent white showing through
     titleBarStyle: 'default', // Ensure consistent title bar
@@ -63,13 +67,8 @@ function createWindow() {
         },
         { type: 'separator' },
         {
-          label: 'Print',
-          accelerator: 'CmdOrCtrl+P',
-          click: () => mainWindow?.webContents.send('menu-print')
-        },
-        {
           label: 'Export to PDF...',
-          accelerator: 'CmdOrCtrl+E',
+          accelerator: 'CmdOrCtrl+P',
           click: () => mainWindow?.webContents.send('menu-export-pdf')
         },
         { type: 'separator' },
@@ -109,81 +108,97 @@ function createWindow() {
             {
               label: 'Dark',
               type: 'radio',
+              checked: currentTheme === 'dark',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'dark')
             },
             {
               label: 'Light',
               type: 'radio',
+              checked: currentTheme === 'light',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'light')
             },
             {
               label: 'Sepia',
               type: 'radio',
+              checked: currentTheme === 'sepia',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'sepia')
             },
             {
               label: 'Nord',
               type: 'radio',
+              checked: currentTheme === 'nord',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'nord')
             },
             {
               label: 'Dracula',
               type: 'radio',
+              checked: currentTheme === 'dracula',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'dracula')
             },
             {
               label: 'Solarized Light',
               type: 'radio',
+              checked: currentTheme === 'solarized-light',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'solarized-light')
             },
             {
               label: 'GitHub',
               type: 'radio',
+              checked: currentTheme === 'github',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'github')
             },
             {
               label: 'Monokai',
               type: 'radio',
+              checked: currentTheme === 'monokai',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'monokai')
             },
             {
               label: 'Literary',
               type: 'radio',
+              checked: currentTheme === 'literary',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'literary')
             },
             {
               label: 'Terminal',
               type: 'radio',
+              checked: currentTheme === 'terminal',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'terminal')
             },
             {
               label: 'Oceanic',
               type: 'radio',
+              checked: currentTheme === 'oceanic',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'oceanic')
             },
             {
               label: 'Newspaper',
               type: 'radio',
+              checked: currentTheme === 'newspaper',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'newspaper')
             },
             {
               label: 'Cyberpunk',
               type: 'radio',
+              checked: currentTheme === 'cyberpunk',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'cyberpunk')
             },
             {
               label: 'Forest',
               type: 'radio',
+              checked: currentTheme === 'forest',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'forest')
             },
             {
               label: 'Minimal',
               type: 'radio',
+              checked: currentTheme === 'minimal',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'minimal')
             },
             {
               label: 'Academic',
               type: 'radio',
+              checked: currentTheme === 'academic',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
             }
           ]
@@ -504,13 +519,29 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
   try {
     const savePath = result.filePath;
     
+    console.log('[PDF] Received theme data:', themeData);
+    
     // Small delay to ensure dialog closes and content is stable
     await new Promise(resolve => setTimeout(resolve, 500));
     
     // Inject theme styles for PDF if theme data is provided
     if (themeData) {
+      console.log('[PDF] Injecting theme CSS with colors:', {
+        body: themeData.body,
+        text: themeData.text,
+        heading: themeData.heading,
+        codeBg: themeData.codeBg
+      });
+      
       const themeCSS = `
         @media print {
+          body {
+            background: ${themeData.body} !important;
+            color: ${themeData.text} !important;
+          }
+          #content {
+            background: ${themeData.content} !important;
+          }
           #markdown-content {
             background: ${themeData.content} !important;
             color: ${themeData.text} !important;
@@ -529,6 +560,9 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
           #markdown-content pre {
             background: ${themeData.codeBg} !important;
           }
+          #markdown-content pre code {
+            background: transparent !important;
+          }
           #markdown-content blockquote {
             background: ${themeData.quoteBg} !important;
             border-color: ${themeData.quoteBorder} !important;
@@ -537,20 +571,32 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
         }
       `;
       
+      console.log('[PDF] Generated CSS:', themeCSS.substring(0, 200));
+      
       await mainWindow.webContents.executeJavaScript(`
         (function() {
           const existingStyle = document.getElementById('pdf-theme-override');
-          if (existingStyle) existingStyle.remove();
+          if (existingStyle) {
+            console.log('[PDF] Removing existing theme style');
+            existingStyle.remove();
+          }
           
           const style = document.createElement('style');
           style.id = 'pdf-theme-override';
           style.textContent = ${JSON.stringify(themeCSS)};
           document.head.appendChild(style);
+          console.log('[PDF] Theme style injected, total styles in head:', document.head.querySelectorAll('style').length);
+          return true;
         })();
       `);
     }
     
-    // Give Chromium one more frame to apply @media print + layout
+    // Give Chromium time to apply @media print styles and complete layout
+    await mainWindow.webContents.executeJavaScript(
+      'new Promise(resolve => setTimeout(resolve, 300))'
+    );
+    
+    // Wait for another animation frame to ensure rendering is complete
     await mainWindow.webContents.executeJavaScript(
       'new Promise(requestAnimationFrame)'
     );
@@ -574,8 +620,22 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       `);
     }
 
-    // Write PDF to file
+    // Write PDF to file synchronously
     fs.writeFileSync(savePath, pdfData as any);
+    console.log('[PDF] File written successfully:', savePath);
+    
+    // Wait a bit to ensure file system has completed the write
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Now open the PDF with the default PDF viewer
+    shell.openPath(savePath).then((error) => {
+      if (error) {
+        console.error('Failed to open PDF:', error);
+        // Still return success since the PDF was created, just couldn't open it
+      } else {
+        console.log('PDF opened successfully:', savePath);
+      }
+    });
     
     return savePath;
   } catch (error) {
@@ -587,14 +647,6 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
   }
 });
 
-ipcMain.handle('print', async () => {
-  if (mainWindow) {
-    mainWindow.webContents.print({}, (success, errorType) => {
-      if (!success) console.error('Print failed:', errorType);
-    });
-  }
-});
-
 ipcMain.handle('clipboard-write', async (_event, text: string) => {
   try {
     clipboard.writeText(text);
@@ -602,6 +654,28 @@ ipcMain.handle('clipboard-write', async (_event, text: string) => {
   } catch (error) {
     console.error('Clipboard write failed:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+ipcMain.handle('set-current-theme', async (_event, themeName: string) => {
+  console.log('[THEME] Received theme update from renderer:', themeName);
+  currentTheme = themeName;
+  // Recreate the window to update the menu with new checked state
+  if (mainWindow) {
+    const currentMenu = Menu.getApplicationMenu();
+    if (currentMenu) {
+      // Find and update theme menu items
+      const fileMenu = currentMenu.items.find(item => item.label === 'File');
+      if (fileMenu && fileMenu.submenu) {
+        const themeSubmenu = fileMenu.submenu.items.find(item => item.label === 'Theme');
+        if (themeSubmenu && themeSubmenu.submenu) {
+          themeSubmenu.submenu.items.forEach(item => {
+            const themeValue = item.label?.toLowerCase().replace(' ', '-');
+            item.checked = (themeValue === themeName);
+          });
+        }
+      }
+    }
   }
 });
 

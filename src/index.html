@@ -457,31 +457,34 @@
         margin: 0.75in;
       }
 
-      /* Force light theme for PDF */
+      /* Basic layout for PDF - theme colors are injected dynamically */
       body {
-        background: #ffffff !important;
-        color: #000000 !important;
         margin: 0 !important;
         padding: 0 !important;
+        width: 100% !important;
+        overflow: visible !important;
       }
 
       #content {
-        background: #ffffff !important;
         padding: 0 !important;
         margin: 0 !important;
+        width: 100% !important;
+        overflow: visible !important;
       }
 
       #markdown-content {
         max-width: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
+        width: 100% !important;
+        overflow: visible !important;
+        box-sizing: border-box !important;
         /* Don't override inline font-size - let user's font size setting apply */
       }
 
       #markdown-content h1,
       #markdown-content h2,
       #markdown-content h3 {
-        color: #000000 !important;
         page-break-after: avoid !important;
         break-after: avoid !important;
       }
@@ -493,17 +496,10 @@
         widows: 3;
       }
 
+      /* Theme colors are injected dynamically, don't override them here */
       #markdown-content code,
       #markdown-content pre {
-        background: #f5f5f5 !important;
-        color: #000000 !important;
-        border: 1px solid #cccccc !important;
-      }
-
-      #markdown-content blockquote {
-        background: #f9f9f9 !important;
-        border-color: #888 !important;
-        color: #444 !important;
+        border: 1px solid rgba(128, 128, 128, 0.3) !important;
       }
 
       /* Hide chrome-y app UI in the PDF */
@@ -512,6 +508,45 @@
       .theme-selector,
       .font-size-controls {
         display: none !important;
+      }
+
+      /* Ensure tables don't get truncated */
+      #markdown-content table {
+        page-break-inside: auto !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        table-layout: fixed !important;
+        box-sizing: border-box !important;
+      }
+
+      #markdown-content tr {
+        page-break-inside: avoid !important;
+        page-break-after: auto !important;
+      }
+
+      #markdown-content td,
+      #markdown-content th {
+        page-break-inside: avoid !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        overflow: visible !important;
+        box-sizing: border-box !important;
+      }
+
+      /* Ensure pre/code blocks don't overflow */
+      #markdown-content pre {
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        max-width: 100% !important;
+        overflow: visible !important;
+        box-sizing: border-box !important;
+      }
+
+      #markdown-content code {
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
       }
 
       /* Constrain diagrams to reasonable size for PDF */
