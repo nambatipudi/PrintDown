@@ -22,6 +22,15 @@ Feature-rich Markdown viewer and PDF exporter built with Electron.
 - Live preview of Markdown files
 - Support for CommonMark and GitHub Flavored Markdown
 - Multiple file tabs for easy switching between documents
+- **NEW: Table of Contents (TOC) Sidebar** - Navigate long documents with collapsible heading tree
+
+### Navigation & Interface
+- **Collapsible TOC Sidebar** - Click the ☰ hamburger button to toggle
+- **Smart heading navigation** - Click any heading in TOC to scroll smoothly
+- **Active section highlighting** - Current section highlighted in TOC
+- **Keyboard shortcuts** - Ctrl/Cmd + \ to toggle TOC
+- **Right-click tab context menu** - Close, Close Others, Close All options
+- **Enhanced drag & drop** - Visual feedback and multi-file support
 
 ### Customizable Themes
 Choose from 16+ themes *(see theme dropdown screenshot above)*:
@@ -62,10 +71,34 @@ Render complex diagrams directly in your Markdown:
 ### PDF Export
 Export your Markdown to PDFs:
 
+### Performance & Reliability
+- **Completely offline** - No CDN dependencies, works without internet
+- **Local vendor scripts** - MathJax, Mermaid, and all libraries bundled locally
+- **System fonts** - Uses high-quality system fonts (no Google Fonts dependency)
+- **Electron 39** - Latest Electron with modern security and performance
+
 ### Session Management
 - Automatically saves open files
 - Restores tabs on app restart
 - Remembers theme and font size preferences
+- **TOC state persistence** - Remembers if sidebar was open/closed
+
+## What's New in v1.3.0 🎉
+
+### Major Features Added:
+- **🧭 Table of Contents Sidebar** - Navigate long documents with collapsible heading tree
+- **⚡ Completely Offline** - Removed all CDN dependencies for true offline functionality
+- **🔧 Enhanced UI** - Moved font/theme controls to main menu for cleaner interface
+- **📝 Better Math Support** - Improved parenthetical math expressions like `(a + b)` 
+- **🖱️ Tab Context Menu** - Right-click tabs for Close, Close Others, Close All options
+- **⬆️ Electron 39** - Latest Electron with modern security and performance
+
+### Technical Improvements:
+- Local vendor scripts (MathJax, Mermaid, Raphael, Underscore)
+- System font stacks instead of Google Fonts
+- Enhanced session restoration
+- Improved drag & drop handling
+- Better error handling and debugging
 
 ## Installation
 
@@ -119,8 +152,15 @@ PrintDown offers multiple convenient ways to open Markdown files:
 - Double‑click the image to reset to 100%
 - Your choice is remembered per file and used during PDF export
 
+### Using Table of Contents (NEW!)
+- Click the **☰ hamburger button** (top-left) to open/close TOC sidebar
+- Or use **View → Toggle Table of Contents** from the menu
+- Or press **Ctrl/Cmd + \\** keyboard shortcut
+- Click any heading in the TOC to navigate smoothly to that section
+- Current section is highlighted automatically as you scroll
+
 ### Changing Themes
-Select from the theme dropdown in the top-right corner.
+Use **View → Theme** from the menu to choose from 16+ beautiful themes.
 
 ### Exporting to PDF
 - **File → Export to PDF** (Ctrl/Cmd + E)
@@ -139,16 +179,23 @@ Select from the theme dropdown in the top-right corner.
 | Open File | `Ctrl/Cmd + O` |
 | Print | `Ctrl/Cmd + P` |
 | Export to PDF | `Ctrl/Cmd + E` |
+| **Toggle TOC Sidebar** | `Ctrl/Cmd + \` |
+| **Increase Font Size** | Available in View menu |
+| **Decrease Font Size** | Available in View menu |
+| **Reset Font Size** | Available in View menu |
 | Exit | `Ctrl/Cmd + Q` |
 
 ## Why PrintDown (vs. VS Code Preview)
 
-- **Better Math Rendering**: Robust MathJax pipeline with improved extraction/restore logic for inline/display math; consistent spacing around inline formulae and ellipses (\\ldots).
-- **Per‑Image Resizing**: Resize individual images visually and keep aspect ratio. Settings persist and apply to PDF output.
-- **Diagrams**: Built‑in Mermaid and UML sequence support with theme awareness; no extensions required.
-- **Print & Export**: First‑class PDF export (and print) that respects theme, font size, and image sizes with page‑friendly styles.
-- **Tabs & Management**: Lightweight multi‑tab viewer with right‑click tab menu (Close, Close Others, Close All).
-- **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead.
+- **Professional Navigation**: Built-in Table of Contents sidebar with smooth scrolling and active section highlighting
+- **Better Math Rendering**: Enhanced MathJax pipeline with improved parenthetical expression support and consistent spacing
+- **Per‑Image Resizing**: Resize individual images visually and keep aspect ratio. Settings persist and apply to PDF output
+- **Diagrams**: Built‑in Mermaid and UML sequence support with theme awareness; no extensions required
+- **Print & Export**: First‑class PDF export (and print) that respects theme, font size, and image sizes with page‑friendly styles
+- **Tabs & Management**: Multi‑tab viewer with right‑click context menu (Close, Close Others, Close All)
+- **Completely Offline**: Zero CDN dependencies - works without internet connection
+- **Modern Architecture**: Electron 39 with latest security features and performance improvements
+- **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead
 
 ## Markdown Examples
 

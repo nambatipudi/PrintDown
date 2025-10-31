@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PrintDown - Markdown Viewer</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&family=Merriweather:wght@400;700&family=Playfair+Display:wght@400;700&family=Roboto+Mono:wght@400;500&family=Source+Sans+3:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;500&family=Spectral:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     * {
       margin: 0;
@@ -53,6 +50,39 @@
       padding: 8px 12px;
       gap: 16px;
       flex-wrap: nowrap;
+    }
+
+    .toc-toggle {
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid #3e3e42;
+      background: #2d2d30;
+      color: #d4d4d4;
+      font-size: 14px;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s ease;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
+    .toc-toggle:hover {
+      background: #37373d;
+    }
+
+    .toc-toggle:active {
+      background: #1e1e1e;
+    }
+
+    .toc-icon {
+      display: inline-block;
+      font-weight: bold;
+    }
+
+    .main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
     }
 
 
@@ -165,6 +195,98 @@
       font-size: 16px;
       color: #888;
     }
+
+    .toc-sidebar {
+      width: 0;
+      min-width: 0;
+      background: #252526;
+      border-right: 1px solid #3e3e42;
+      overflow: hidden;
+      transition: width 0.3s ease, min-width 0.3s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .toc-sidebar.open {
+      width: 280px;
+      min-width: 280px;
+    }
+
+    .toc-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #3e3e42;
+      background: #2d2d30;
+    }
+
+    .toc-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #d4d4d4;
+      margin: 0;
+    }
+
+    .toc-close {
+      background: none;
+      border: none;
+      color: #d4d4d4;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 3px;
+      transition: background-color 0.2s ease;
+    }
+
+    .toc-close:hover {
+      background: #37373d;
+      color: #ffffff;
+    }
+
+    .toc-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .toc-empty {
+      padding: 20px 16px;
+      color: #888;
+      font-size: 13px;
+      text-align: center;
+      font-style: italic;
+    }
+
+    .toc-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 16px;
+      cursor: pointer;
+      color: #d4d4d4;
+      font-size: 13px;
+      transition: background-color 0.2s ease;
+      border-left: 3px solid transparent;
+      text-decoration: none;
+    }
+
+    .toc-item:hover {
+      background: #37373d;
+      color: #ffffff;
+    }
+
+    .toc-item.active {
+      background: #0e639c;
+      color: #ffffff;
+      border-left-color: #4fc3f7;
+    }
+
+    .toc-item.level-1 { padding-left: 16px; font-weight: 600; }
+    .toc-item.level-2 { padding-left: 28px; }
+    .toc-item.level-3 { padding-left: 40px; }
+    .toc-item.level-4 { padding-left: 52px; }
+    .toc-item.level-5 { padding-left: 64px; }
+    .toc-item.level-6 { padding-left: 76px; }
 
     #content {
       flex: 1;
@@ -420,11 +542,25 @@
 </head>
 <body>
   <div class="header">
+    <button class="toc-toggle" id="toc-toggle" title="Toggle Table of Contents">
+      <span class="toc-icon">☰</span>
+    </button>
     <div class="tabs" id="tabs"></div>
   </div>
-  <div id="content">
-    <div class="empty-state">Open a Markdown file to begin</div>
-    <div id="markdown-content" style="display: none;"></div>
+  <div class="main-container">
+    <div class="toc-sidebar" id="toc-sidebar">
+      <div class="toc-header">
+        <h3>Contents</h3>
+        <button class="toc-close" id="toc-close" title="Close TOC">×</button>
+      </div>
+      <div class="toc-content" id="toc-content">
+        <div class="toc-empty">No headings found</div>
+      </div>
+    </div>
+    <div id="content">
+      <div class="empty-state">Open a Markdown file to begin</div>
+      <div id="markdown-content" style="display: none;"></div>
+    </div>
   </div>
   
   <!-- MathJax Configuration - MUST come before loading MathJax -->
@@ -454,20 +590,21 @@
       }
     };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
->
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <script src="vendor/mathjax-tex-svg.js"></script>
   
   <!-- Mermaid for sequence and other diagrams -->
-  <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    window.mermaid = mermaid;
+  <script src="vendor/mermaid.min.js"></script>
+  <script>
+    // Initialize Mermaid after it's loaded
+    if (window.mermaid) {
+      window.mermaid.initialize({ startOnLoad: false });
+    }
   </script>
   
   <!-- js-sequence-diagrams for UML sequence diagrams -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.13.6/underscore-min.js"></script>
-  <script src="https://bramp.github.io/js-sequence-diagrams/js/sequence-diagram-min.js"></script>
+  <script src="vendor/raphael.min.js"></script>
+  <script src="vendor/underscore-min.js"></script>
+  <script src="vendor/sequence-diagram-min.js"></script>
   
   <!-- Tab context menu -->
   <div id="tab-context-menu">

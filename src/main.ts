@@ -190,6 +190,12 @@ function createWindow() {
         },
         { type: 'separator' },
         {
+          label: 'Toggle Table of Contents',
+          accelerator: 'CmdOrCtrl+\\',
+          click: () => mainWindow?.webContents.send('menu-toggle-toc')
+        },
+        { type: 'separator' },
+        {
           label: 'Toggle Developer Tools',
           accelerator: 'F12',
           click: () => mainWindow?.webContents.toggleDevTools()

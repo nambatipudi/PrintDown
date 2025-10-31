@@ -83,6 +83,10 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuThemeChange: (callback: (event: any, theme: string) => void) => {
     ipcRenderer.removeAllListeners('menu-theme-change');
     ipcRenderer.on('menu-theme-change', callback);
+  },
+  onMenuToggleTOC: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-toggle-toc');
+    ipcRenderer.on('menu-toggle-toc', callback);
   }
 });
 

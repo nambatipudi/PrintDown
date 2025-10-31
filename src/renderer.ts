@@ -30,6 +30,7 @@ declare global {
       onMenuFontDecrease: (callback: () => void) => void;
       onMenuFontReset: (callback: () => void) => void;
       onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
+      onMenuToggleTOC: (callback: () => void) => void;
     };
     clipboard: {
       writeText: (text: string) => void;
@@ -48,6 +49,14 @@ interface Tab {
   processedContent?: string; // Content after extractMath (with placeholders)
   mathStore?: Map<string, string>; // Store math expressions per tab
   isRendered?: boolean; // Track if tab has been rendered
+  tocItems?: TOCItem[]; // Table of contents items
+}
+
+interface TOCItem {
+  id: string;
+  text: string;
+  level: number;
+  element?: HTMLElement;
 }
 
 const tabs: Tab[] = [];
@@ -208,8 +217,8 @@ const themes = {
     quoteBg: '#f0ebe3',
     quoteBorder: '#c65d2b',
     quoteText: '#5d4e37',
-    fontFamily: '"Crimson Pro", "Georgia", "Times New Roman", serif',
-    codeFontFamily: '"Fira Code", "Monaco", monospace',
+    fontFamily: '"Times New Roman", "Georgia", "Garamond", "Book Antiqua", serif',
+    codeFontFamily: '"Consolas", "Monaco", "SF Mono", "Menlo", "Courier New", monospace',
     fontSize: '18px',
     lineHeight: '1.8'
   },
@@ -224,8 +233,8 @@ const themes = {
     quoteBg: '#1a1a1a',
     quoteBorder: '#00ff00',
     quoteText: '#00cc00',
-    fontFamily: '"JetBrains Mono", "Roboto Mono", "Courier New", monospace',
-    codeFontFamily: '"JetBrains Mono", "Roboto Mono", monospace',
+    fontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", "Liberation Mono", "Courier New", monospace',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", "Liberation Mono", monospace',
     fontSize: '15px',
     lineHeight: '1.5'
   },
@@ -240,8 +249,8 @@ const themes = {
     quoteBg: '#343d46',
     quoteBorder: '#5fb3b3',
     quoteText: '#a7adba',
-    fontFamily: '"Inter", -apple-system, sans-serif',
-    codeFontFamily: '"Fira Code", monospace',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '16px',
     lineHeight: '1.7'
   },
@@ -256,7 +265,7 @@ const themes = {
     quoteBg: '#f5f5f5',
     quoteBorder: '#cccccc',
     quoteText: '#555555',
-    fontFamily: '"Merriweather", "Georgia", serif',
+    fontFamily: '"Georgia", "Times New Roman", "Book Antiqua", serif',
     codeFontFamily: '"Courier New", monospace',
     fontSize: '17px',
     lineHeight: '1.75'
@@ -272,8 +281,8 @@ const themes = {
     quoteBg: '#1a1f3a',
     quoteBorder: '#ff00ff',
     quoteText: '#c9b3ff',
-    fontFamily: '"Space Grotesk", -apple-system, sans-serif',
-    codeFontFamily: '"JetBrains Mono", monospace',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '16px',
     lineHeight: '1.6'
   },
@@ -288,8 +297,8 @@ const themes = {
     quoteBg: '#2d4a2d',
     quoteBorder: '#8bc34a',
     quoteText: '#c5e1a5',
-    fontFamily: '"Source Sans 3", -apple-system, sans-serif',
-    codeFontFamily: '"Fira Code", monospace',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '16px',
     lineHeight: '1.65'
   },
@@ -304,8 +313,8 @@ const themes = {
     quoteBg: '#f5f5f5',
     quoteBorder: '#dddddd',
     quoteText: '#666666',
-    fontFamily: '"Inter", -apple-system, sans-serif',
-    codeFontFamily: '"Roboto Mono", monospace',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '15px',
     lineHeight: '1.6'
   },
@@ -320,8 +329,8 @@ const themes = {
     quoteBg: '#e8eaf6',
     quoteBorder: '#3f51b5',
     quoteText: '#1a237e',
-    fontFamily: '"Spectral", "Georgia", serif',
-    codeFontFamily: '"Fira Code", monospace',
+    fontFamily: '"Georgia", "Times New Roman", "Book Antiqua", serif',
+    codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '17px',
     lineHeight: '1.8'
   }
@@ -868,6 +877,235 @@ async function renderTab(index: number) {
 
   updateTabUI();
   saveSession();
+  
+  // Generate and update TOC for the active tab
+  generateTOC();
+}
+
+// Generate Table of Contents from headings
+function generateTOC() {
+  const contentDiv = document.getElementById('markdown-content');
+  const tocContent = document.getElementById('toc-content');
+  
+  if (!contentDiv || !tocContent || activeTabIndex < 0) {
+    showEmptyTOC();
+    return;
+  }
+
+  const tab = tabs[activeTabIndex];
+  if (!tab) {
+    showEmptyTOC();
+    return;
+  }
+
+  // Find all headings in the rendered content
+  const headings = contentDiv.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  
+  if (headings.length === 0) {
+    showEmptyTOC();
+    return;
+  }
+
+  // Generate TOC items
+  const tocItems: TOCItem[] = [];
+  headings.forEach((heading, index) => {
+    const level = parseInt(heading.tagName.charAt(1)); // Extract number from h1, h2, etc.
+    const text = heading.textContent?.trim() || `Heading ${index + 1}`;
+    const id = `toc-heading-${index}`;
+    
+    // Add ID to heading for navigation
+    heading.id = id;
+    
+    tocItems.push({
+      id,
+      text,
+      level,
+      element: heading as HTMLElement
+    });
+  });
+
+  // Store TOC items in tab
+  tab.tocItems = tocItems;
+
+  // Render TOC
+  renderTOC(tocItems);
+}
+
+// Render TOC items in sidebar
+function renderTOC(tocItems: TOCItem[]) {
+  const tocContent = document.getElementById('toc-content');
+  if (!tocContent) return;
+
+  // Clear existing content
+  tocContent.innerHTML = '';
+
+  // Create TOC items
+  tocItems.forEach(item => {
+    const tocItem = document.createElement('div');
+    tocItem.className = `toc-item level-${item.level}`;
+    tocItem.textContent = item.text;
+    tocItem.title = item.text;
+    
+    // Add click handler for smooth scrolling
+    tocItem.addEventListener('click', () => {
+      scrollToHeading(item.id);
+      setActiveTOCItem(item.id);
+    });
+    
+    tocContent.appendChild(tocItem);
+  });
+}
+
+// Show empty TOC state
+function showEmptyTOC() {
+  const tocContent = document.getElementById('toc-content');
+  if (!tocContent) return;
+  
+  tocContent.innerHTML = '<div class="toc-empty">No headings found</div>';
+}
+
+// Scroll to heading with smooth animation
+function scrollToHeading(headingId: string) {
+  const heading = document.getElementById(headingId);
+  const contentDiv = document.getElementById('content');
+  
+  if (!heading || !contentDiv) return;
+  
+  // Calculate position relative to content div
+  const headingRect = heading.getBoundingClientRect();
+  const contentRect = contentDiv.getBoundingClientRect();
+  const offset = headingRect.top - contentRect.top + contentDiv.scrollTop - 20; // 20px padding
+  
+  contentDiv.scrollTo({
+    top: offset,
+    behavior: 'smooth'
+  });
+}
+
+// Set active TOC item
+function setActiveTOCItem(activeId: string) {
+  const tocItems = document.querySelectorAll('.toc-item');
+  tocItems.forEach((item, index) => {
+    item.classList.remove('active');
+    if (tabs[activeTabIndex]?.tocItems?.[index]?.id === activeId) {
+      item.classList.add('active');
+    }
+  });
+}
+
+// Toggle TOC sidebar
+function toggleTOC() {
+  console.log('[TOC] toggleTOC() called');
+  const sidebar = document.getElementById('toc-sidebar');
+  if (!sidebar) {
+    console.error('[TOC] Sidebar element not found!');
+    return;
+  }
+  
+  console.log('[TOC] Toggling sidebar, current classes:', sidebar.classList.toString());
+  sidebar.classList.toggle('open');
+  
+  // Save TOC state
+  const isOpen = sidebar.classList.contains('open');
+  console.log('[TOC] Sidebar is now:', isOpen ? 'open' : 'closed');
+  localStorage.setItem('tocOpen', isOpen.toString());
+}
+
+// Initialize TOC toggle handlers
+function initializeTOC() {
+  console.log('[TOC] Initializing TOC functionality');
+  
+  const tocToggle = document.getElementById('toc-toggle');
+  const tocClose = document.getElementById('toc-close');
+  const tocSidebar = document.getElementById('toc-sidebar');
+  
+  console.log('[TOC] Elements found:', {
+    tocToggle: !!tocToggle,
+    tocClose: !!tocClose,
+    tocSidebar: !!tocSidebar
+  });
+  
+  if (tocToggle) {
+    // Check if we already have a click handler by checking for a data attribute
+    if (tocToggle.hasAttribute('data-toc-initialized')) {
+      console.log('[TOC] Already initialized, skipping...');
+      return;
+    }
+    
+    console.log('[TOC] Adding click event to toggle button');
+    // Single click event listener with a more specific handler
+    const clickHandler = (e: Event) => {
+      console.log('[TOC] Toggle button clicked');
+      e.preventDefault();
+      e.stopPropagation();
+      toggleTOC();
+    };
+    
+    tocToggle.addEventListener('click', clickHandler);
+    // Mark as initialized
+    tocToggle.setAttribute('data-toc-initialized', 'true');
+    
+    console.log('[TOC] Click event listener added successfully');
+  } else {
+    console.error('[TOC] Toggle button not found!');
+  }
+  
+  if (tocClose) {
+    tocClose.addEventListener('click', () => {
+      if (tocSidebar) {
+        tocSidebar.classList.remove('open');
+        localStorage.setItem('tocOpen', 'false');
+      }
+    });
+  }
+  
+  // Restore TOC state
+  const savedTOCState = localStorage.getItem('tocOpen');
+  if (savedTOCState === 'true' && tocSidebar) {
+    tocSidebar.classList.add('open');
+  }
+  
+  // Auto-update active TOC item on scroll
+  const contentDiv = document.getElementById('content');
+  if (contentDiv) {
+    let scrollTimeout: number;
+    contentDiv.addEventListener('scroll', () => {
+      clearTimeout(scrollTimeout);
+      scrollTimeout = window.setTimeout(() => {
+        updateActiveTOCOnScroll();
+      }, 150); // Debounce scroll events
+    });
+  }
+}
+
+// Update active TOC item based on scroll position
+function updateActiveTOCOnScroll() {
+  if (activeTabIndex < 0 || !tabs[activeTabIndex]?.tocItems) return;
+  
+  const contentDiv = document.getElementById('content');
+  if (!contentDiv) return;
+  
+  const tocItems = tabs[activeTabIndex].tocItems!;
+  const contentRect = contentDiv.getBoundingClientRect();
+  let closestItem: TOCItem | null = null;
+  let closestDistance = Infinity;
+  
+  // Find the heading that's closest to the top of the viewport
+  for (const item of tocItems) {
+    if (!item.element) continue;
+    
+    const headingRect = item.element.getBoundingClientRect();
+    const distance = Math.abs(headingRect.top - contentRect.top);
+    
+    if (distance < closestDistance && headingRect.top <= contentRect.top + 100) {
+      closestDistance = distance;
+      closestItem = item;
+    }
+  }
+  
+  if (closestItem) {
+    setActiveTOCItem(closestItem.id);
+  }
 }
 
 // Add per-image resizing with aspect ratio preserved, persisted by src
@@ -1271,6 +1509,11 @@ window.menuEvents.onMenuThemeChange((_event: any, theme: string) => {
   }
 });
 
+// TOC toggle menu event
+window.menuEvents.onMenuToggleTOC(() => {
+  toggleTOC();
+});
+
 // Handle files opened from system (double-click on .md file)
 window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => {
   try {
@@ -1604,6 +1847,9 @@ if ((window as any).ipc) {
 
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize TOC functionality
+  initializeTOC();
+  
   const dropZone = document.body;
 
   // Prevent default drag behaviors on the entire document

@@ -37,7 +37,12 @@ module.exports = [
     },
     output: {path: path.resolve(__dirname, 'dist'), filename: 'renderer.js'},
     plugins: [
-      new HtmlWebpackPlugin({template: './src/index.html'})
+      new HtmlWebpackPlugin({template: './src/index.html'}),
+      new CopyWebpackPlugin({
+        patterns: [
+          { from: 'src/vendor', to: 'vendor' }
+        ]
+      })
     ],
     resolve: {extensions: ['.ts', '.js']}
   }
