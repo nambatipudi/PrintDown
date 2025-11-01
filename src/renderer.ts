@@ -924,30 +924,31 @@ function initializeTOC() {
     tocSidebar: !!tocSidebar
   });
   
-  if (tocToggle) {
-    // Check if we already have a click handler by checking for a data attribute
-    if (tocToggle.hasAttribute('data-toc-initialized')) {
-      console.log('[TOC] Already initialized, skipping...');
-      return;
-    }
-    
-    console.log('[TOC] Adding click event to toggle button');
-    // Single click event listener with a more specific handler
-    const clickHandler = (e: Event) => {
-      console.log('[TOC] Toggle button clicked');
-      e.preventDefault();
-      e.stopPropagation();
-      toggleTOC();
-    };
-    
-    tocToggle.addEventListener('click', clickHandler);
-    // Mark as initialized
-    tocToggle.setAttribute('data-toc-initialized', 'true');
-    
-    console.log('[TOC] Click event listener added successfully');
-  } else {
-    console.error('[TOC] Toggle button not found!');
+  if (!tocToggle) {
+    console.warn('[TOC] Toggle button not found - DOM may not be ready yet');
+    return;
   }
+  
+  // Check if we already have a click handler by checking for a data attribute
+  if (tocToggle.hasAttribute('data-toc-initialized')) {
+    console.log('[TOC] Already initialized, skipping...');
+    return;
+  }
+  
+  console.log('[TOC] Adding click event to toggle button');
+  // Single click event listener with a more specific handler
+  const clickHandler = (e: Event) => {
+    console.log('[TOC] Toggle button clicked');
+    e.preventDefault();
+    e.stopPropagation();
+    toggleTOC();
+  };
+  
+  tocToggle.addEventListener('click', clickHandler);
+  // Mark as initialized
+  tocToggle.setAttribute('data-toc-initialized', 'true');
+  
+  console.log('[TOC] Click event listener added successfully');
   
   if (tocClose) {
     tocClose.addEventListener('click', () => {
@@ -1083,7 +1084,12 @@ function setupResizableImages(container: HTMLElement) {
 }
 
 function updateTabUI() {
-  const tabsContainer = document.getElementById('tabs')!;
+  const tabsContainer = document.getElementById('tabs');
+  if (!tabsContainer) {
+    console.error('[TABS] tabs container not found');
+    return;
+  }
+  
   tabsContainer.innerHTML = '';
 
   tabs.forEach((tab, index) => {
