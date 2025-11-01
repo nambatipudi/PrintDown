@@ -83,6 +83,41 @@ const md = new MarkdownIt({
   delimiters: ['dollars', 'brackets', 'gitlab', 'julia', 'kramdown'], // Support all common delimiters
 });
 
+// Patch the dollars inline regex to support spaces in math expressions
+// The default regex /\$((?:[^\s\\])|(?:\S.*?[^\s\\]))\$/gy rejects expressions with spaces
+// We add a custom rule that matches $...$ with any content (including spaces)
+const customDollarRule = (state: any, silent: boolean) => {
+  const pos = state.pos;
+  const str = state.src;
+  
+  // Match $...$ with any content (including spaces)
+  const rex = /\$([^$]+?)\$/gy;
+  rex.lastIndex = pos;
+  const pre = str.startsWith('$', pos);
+  const match = pre && rex.exec(str);
+  const res = !!match && pos < rex.lastIndex;
+  
+  if (res) {
+    if (!silent) {
+      const token = state.push('math_inline_fixed', 'math', 0);
+      token.content = match[1];
+      token.markup = '$';
+    }
+    state.pos = rex.lastIndex;
+  }
+  return res;
+};
+
+// Register custom renderer for our fixed inline math
+md.renderer.rules['math_inline_fixed'] = (tokens, idx) => {
+  const tex = tokens[idx].content;
+  // Use our custom engine to render
+  return `$${tex}$`;
+};
+
+// Insert our custom rule before 'escape' to catch space-containing math before other rules
+md.inline.ruler.before('escape', 'math_inline_fixed', customDollarRule);
+
 // Declare MathJax window object
 declare global {
   interface Window {
