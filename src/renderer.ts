@@ -166,7 +166,8 @@ async function paginateNow() {
 
   try {
     // Ensure images/fonts are ready; MathJax already awaited in your pipeline.
-    await new Promise(r => setTimeout(r, 50));
+    // Increase delay to give DOM and CSS time to fully settle
+    await new Promise(r => setTimeout(r, 200));
 
     // Paged.js will take current DOM as source and build .pagedjs_pages
     // Remove prior pagination if it exists (Paged.js appends a container to <body>)
