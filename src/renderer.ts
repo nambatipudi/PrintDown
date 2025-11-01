@@ -1544,6 +1544,13 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
 });
 
 window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
+  // Wait for DOM to be ready before restoring
+  if (document.readyState === 'loading') {
+    await new Promise(resolve => {
+      document.addEventListener('DOMContentLoaded', resolve, { once: true });
+    });
+  }
+  
   // Only restore session once and only if no tabs are currently open
   if (sessionRestored || tabs.length > 0) {
     console.log('[SESSION] Skipping session restoration - already restored or tabs already open');
