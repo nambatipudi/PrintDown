@@ -197,8 +197,12 @@ async function paginateNow() {
 
     // Move .pagedjs_pages into #content if it was appended to body
     const pagesContainer = document.querySelector('.pagedjs_pages');
+    console.log('[PAGED] Pages container found:', !!pagesContainer);
+    console.log('[PAGED] Pages container parent:', pagesContainer?.parentElement?.tagName);
+    
     if (pagesContainer && contentDiv) {
       if (pagesContainer.parentElement !== contentDiv) {
+        console.log('[PAGED] Moving pages container into content div');
         // Move pages into content div
         // Keep markdown-content in DOM (hidden) so we can toggle back
         if (markdownContent && contentDiv.contains(markdownContent)) {
@@ -206,11 +210,20 @@ async function paginateNow() {
           markdownContent.style.display = 'none';
         }
         contentDiv.appendChild(pagesContainer);
+        console.log('[PAGED] Pages container moved, now visible');
       } else {
+        console.log('[PAGED] Pages container already in content div');
         // Already in content div, just hide markdown content
         if (markdownContent) {
           markdownContent.style.display = 'none';
         }
+      }
+      console.log('[PAGED] Final state - pages container display:', getComputedStyle(pagesContainer).display);
+    } else {
+      console.warn('[PAGED] Pages container or content div not found after pagination');
+      // Show markdown content as fallback
+      if (markdownContent) {
+        markdownContent.style.display = 'block';
       }
     }
   } catch (error) {
