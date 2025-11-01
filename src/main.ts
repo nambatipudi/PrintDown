@@ -10,7 +10,19 @@ interface SessionData {
   fontSizeFactor?: number;
 }
 
-const store = new Store<{ session: SessionData }>();
+type PageSettings = {
+  size: 'Letter' | 'A4' | 'Legal';
+  orientation: 'portrait' | 'landscape';
+  margins: { top: string; right: string; bottom: string; left: string }; // e.g. "0.75in"
+};
+
+const defaultPage: PageSettings = {
+  size: 'Letter',
+  orientation: 'portrait',
+  margins: { top: '0.75in', right: '0.75in', bottom: '0.75in', left: '0.75in' }
+};
+
+const store = new Store<{ session: SessionData; pageSettings?: PageSettings }>();
 
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
@@ -66,6 +78,11 @@ function createWindow() {
           click: () => mainWindow?.webContents.send('menu-open')
         },
         { type: 'separator' },
+        {
+          label: 'Page Setup…',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => mainWindow?.webContents.send('menu-open-page-setup')
+        },
         {
           label: 'Export to PDF...',
           accelerator: 'CmdOrCtrl+P',
@@ -202,6 +219,13 @@ function createWindow() {
               click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
             }
           ]
+        },
+        { type: 'separator' },
+        {
+          label: 'Page Preview',
+          type: 'checkbox',
+          checked: true,
+          click: () => mainWindow?.webContents.send('menu-toggle-page-preview')
         },
         { type: 'separator' },
         {
@@ -681,4 +705,15 @@ ipcMain.handle('set-current-theme', async (_event, themeName: string) => {
 
 ipcMain.handle('get-app-version', async () => {
   return app.getVersion();
+});
+
+// Page settings IPC handlers
+ipcMain.handle('pd:get-page-settings', () => {
+  const current = store.get('pageSettings') as PageSettings | undefined;
+  return current ?? defaultPage;
+});
+
+ipcMain.handle('pd:set-page-settings', (_e, settings: PageSettings) => {
+  store.set('pageSettings', settings);
+  return true;
 });

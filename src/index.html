@@ -450,12 +450,71 @@
       color: #4ec9b0;
     }
 
+    /* Page CSS variables and @page rules (shared by preview and print) */
+    :root {
+      /* Defaults; we'll overwrite from renderer.ts via CSS variables */
+      --pd-page-size: Letter;
+      --pd-margin-top: 0.75in;
+      --pd-margin-right: 0.75in;
+      --pd-margin-bottom: 0.75in;
+      --pd-margin-left: 0.75in;
+    }
+
+    /* Word-like page container visuals provided by Paged.js */
+    .pagedjs_pages {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+      overflow: auto;
+      height: 100%;
+      width: 100%;
+      background: #1e1e1e; /* app backdrop */
+    }
+
+    .pagedjs_page {
+      box-shadow: 0 2px 10px rgba(0,0,0,.35);
+      background: white;
+    }
+
+    /* When paged view is active, hide continuous view */
+    #content:has(.pagedjs_pages) #markdown-content {
+      display: none !important;
+    }
+
+    /* When continuous view is active (no paged pages), show markdown content normally */
+    #content:not(:has(.pagedjs_pages)) #markdown-content {
+      display: block !important;
+    }
+
+    /* Your actual print size & margins come from @page: */
+    @page {
+      size: var(--pd-page-size);
+      margin: var(--pd-margin-top) var(--pd-margin-right)
+              var(--pd-margin-bottom) var(--pd-margin-left);
+    }
+
+    /* Page numbers in the footer (works via paged.js margin boxes) */
+    @page {
+      @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 10pt;
+        color: #666;
+      }
+    }
+
+    /* Keep big items intact across breaks */
+    #markdown-content .resizable-image,
+    #markdown-content table,
+    #markdown-content pre {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
     /* Print stylesheet for PDF export */
     @media print {
-      @page {
-        size: Letter portrait;
-        margin: 0.75in;
-      }
+      /* Size/margins are controlled by global @page above */
       /* Basic layout for PDF - theme colors are injected dynamically */
       body {
         margin: 0 !important;
@@ -639,6 +698,9 @@
   <script src="vendor/raphael.min.js"></script>
   <script src="vendor/underscore-min.js"></script>
   <script src="vendor/sequence-diagram-min.js"></script>
+  
+  <!-- Paged.js for paged media preview -->
+  <script src="vendor/paged.polyfill.js"></script>
   
   <!-- Tab context menu -->
   <div id="tab-context-menu">

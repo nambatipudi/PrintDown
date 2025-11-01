@@ -30,10 +30,16 @@ declare global {
       onMenuFontReset: (callback: () => void) => void;
       onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
       onMenuToggleTOC: (callback: () => void) => void;
+      onTogglePagePreview: (callback: () => void) => void;
+      onOpenPageSetup: (callback: () => void) => void;
     };
       themeAPI: {
         setCurrentTheme: (themeName: string) => Promise<void>;
       };
+    pageAPI: {
+      getSettings: () => Promise<PageSettings>;
+      setSettings: (settings: PageSettings) => Promise<boolean>;
+    };
     clipboard: {
       writeText: (text: string) => void;
     };
@@ -41,6 +47,7 @@ declare global {
     MathJax: any;
     mermaid: any;
     Diagram: any;
+    PagedPolyfill: any;
   }
 }
 
@@ -59,9 +66,17 @@ interface TOCItem {
   element?: HTMLElement;
 }
 
+type PageSettings = {
+  size: 'Letter' | 'A4' | 'Legal';
+  orientation: 'portrait' | 'landscape';
+  margins: { top: string; right: string; bottom: string; left: string };
+};
+
 const tabs: Tab[] = [];
 let activeTabIndex = -1;
 let sessionRestored = false; // Flag to prevent multiple session restorations
+let pagePreviewEnabled = true;
+let currentPageSettings: PageSettings;
 
 // Initialize markdown-it with texmath plugin for VS Code-style math rendering
 const md = new MarkdownIt({
@@ -127,6 +142,79 @@ declare global {
 
 // Track current theme
 let currentThemeName: keyof typeof themes = 'dark';
+
+// Page settings management
+function applyPageSettingsToCSS(ps: PageSettings) {
+  const size = `${ps.size} ${ps.orientation}`;
+  const root = document.documentElement.style;
+  root.setProperty('--pd-page-size', size);
+  root.setProperty('--pd-margin-top', ps.margins.top);
+  root.setProperty('--pd-margin-right', ps.margins.right);
+  root.setProperty('--pd-margin-bottom', ps.margins.bottom);
+  root.setProperty('--pd-margin-left', ps.margins.left);
+}
+
+// Initialize page settings on startup
+(async function initPageSettings() {
+  currentPageSettings = await window.pageAPI.getSettings();
+  applyPageSettingsToCSS(currentPageSettings);
+})();
+
+// Pagination function
+async function paginateNow() {
+  if (!pagePreviewEnabled || !window.PagedPolyfill) return;
+
+  // Ensure images/fonts are ready; MathJax already awaited in your pipeline.
+  await new Promise(r => setTimeout(r, 50));
+
+  // Paged.js will take current DOM as source and build .pagedjs_pages
+  // Remove prior pagination if it exists (Paged.js appends a container to <body>)
+  const old = document.querySelector('.pagedjs_pages');
+  if (old) old.remove();
+
+  // Ensure markdown content is visible for Paged.js to read (it uses the DOM)
+  const markdownContent = document.getElementById('markdown-content');
+  const contentDiv = document.getElementById('content');
+  if (markdownContent && contentDiv) {
+    // Make sure markdown content is in the content div and visible
+    if (!contentDiv.contains(markdownContent)) {
+      contentDiv.appendChild(markdownContent);
+    }
+    markdownContent.style.display = 'block';
+  }
+
+  // Kick off the preview; it's idempotent for your single article flow.
+  // Paged.js will read from #markdown-content and create .pagedjs_pages
+  await window.PagedPolyfill.preview();
+
+  // Move .pagedjs_pages into #content if it was appended to body
+  const pagesContainer = document.querySelector('.pagedjs_pages');
+  if (pagesContainer && contentDiv) {
+    if (pagesContainer.parentElement !== contentDiv) {
+      // Move pages into content div
+      // Keep markdown-content in DOM (hidden) so we can toggle back
+      if (markdownContent && contentDiv.contains(markdownContent)) {
+        // Markdown content stays in DOM but will be hidden by CSS
+        markdownContent.style.display = 'none';
+      }
+      contentDiv.appendChild(pagesContainer);
+    } else {
+      // Already in content div, just hide markdown content
+      if (markdownContent) {
+        markdownContent.style.display = 'none';
+      }
+    }
+  }
+}
+
+// Re-paginate on appearance changes (theme/font) with debounce
+function onAppearanceChanged() {
+  if (pagePreviewEnabled) {
+    // Debounce to avoid double work
+    clearTimeout((onAppearanceChanged as any)._t);
+    (onAppearanceChanged as any)._t = setTimeout(paginateNow, 120);
+  }
+}
 
 // Theme definitions
 const themes = {
@@ -453,6 +541,9 @@ function applyTheme(themeName: keyof typeof themes) {
   
   // Save theme preference
   localStorage.setItem('selectedTheme', themeName);
+  
+  // Re-paginate on theme change
+  onAppearanceChanged();
 }
 
 // Mermaid diagram counter
@@ -618,6 +709,17 @@ async function renderTab(index: number) {
   // No-op delay previously used for protocol tests has been removed
   contentDiv.style.display = 'block';
   emptyState.style.display = 'none';
+  
+  // If page preview is disabled, ensure we show continuous view (remove any pages)
+  if (!pagePreviewEnabled) {
+    const pages = document.querySelector('.pagedjs_pages');
+    if (pages) pages.remove();
+    if (contentDiv) {
+      // Ensure markdown-content is visible
+      const mdContent = document.getElementById('markdown-content');
+      if (mdContent) mdContent.style.display = 'block';
+    }
+  }
 
   // Process diagrams and math on every render (tabs rebuild the DOM each time)
     // Process Mermaid diagrams first
@@ -658,12 +760,13 @@ async function renderTab(index: number) {
         console.error('[MATHJAX] MathJax typeset error:', err);
         console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
       }
-    } else {
-      console.warn('[MATHJAX] MathJax not available or typesetPromise not found');
-      console.warn('[MATHJAX] window.MathJax:', window.MathJax);
-    }
+      } else {
+        console.warn('[MATHJAX] MathJax not available or typesetPromise not found');
+        console.warn('[MATHJAX] window.MathJax:', window.MathJax);
+      }
     
-  
+    // Paginate after all async rendering is complete
+    await paginateNow();
   
   // Apply current theme
   const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
@@ -1318,6 +1421,69 @@ window.menuEvents.onMenuToggleTOC(() => {
   toggleTOC();
 });
 
+// Page preview toggle menu event
+window.menuEvents.onTogglePagePreview(() => {
+  pagePreviewEnabled = !pagePreviewEnabled;
+  const pages = document.querySelector('.pagedjs_pages');
+  const markdownContent = document.getElementById('markdown-content');
+  const contentDiv = document.getElementById('content');
+  
+  if (!pagePreviewEnabled) {
+    // Continuous view: Remove paged boxes and show continuous flow
+    if (pages) {
+      pages.remove();
+    }
+    // Markdown content will be shown automatically via CSS :has() selector
+    // But ensure it's visible and properly placed
+    if (markdownContent) {
+      markdownContent.style.display = 'block';
+      // Ensure it's in content div
+      if (contentDiv && !contentDiv.contains(markdownContent)) {
+        contentDiv.appendChild(markdownContent);
+      }
+    }
+  } else {
+    // Paged view: Ensure content is ready for pagination
+    if (markdownContent && contentDiv) {
+      // Make sure markdown content is in the DOM and visible for Paged.js to read
+      if (!contentDiv.contains(markdownContent)) {
+        contentDiv.appendChild(markdownContent);
+      }
+      markdownContent.style.display = 'block';
+    }
+    // Paginate (this will hide markdown-content and show pages)
+    paginateNow();
+  }
+});
+
+// Page setup menu event
+window.menuEvents.onOpenPageSetup(async () => {
+  // Simple prompt-based UI for now (can be enhanced with a modal later)
+  const newSize = prompt('Page Size (Letter/A4/Legal):', currentPageSettings.size) || currentPageSettings.size;
+  const newOrientation = prompt('Orientation (portrait/landscape):', currentPageSettings.orientation) || currentPageSettings.orientation;
+  const newTop = prompt('Top Margin (e.g., 0.75in):', currentPageSettings.margins.top) || currentPageSettings.margins.top;
+  const newRight = prompt('Right Margin (e.g., 0.75in):', currentPageSettings.margins.right) || currentPageSettings.margins.right;
+  const newBottom = prompt('Bottom Margin (e.g., 0.75in):', currentPageSettings.margins.bottom) || currentPageSettings.margins.bottom;
+  const newLeft = prompt('Left Margin (e.g., 0.75in):', currentPageSettings.margins.left) || currentPageSettings.margins.left;
+
+  if (newSize && (newSize === 'Letter' || newSize === 'A4' || newSize === 'Legal') &&
+      newOrientation && (newOrientation === 'portrait' || newOrientation === 'landscape')) {
+    currentPageSettings = {
+      size: newSize as 'Letter' | 'A4' | 'Legal',
+      orientation: newOrientation as 'portrait' | 'landscape',
+      margins: {
+        top: newTop,
+        right: newRight,
+        bottom: newBottom,
+        left: newLeft
+      }
+    };
+    await window.pageAPI.setSettings(currentPageSettings);
+    applyPageSettingsToCSS(currentPageSettings);
+    if (pagePreviewEnabled) paginateNow();
+  }
+});
+
 // Handle files opened from system (double-click on .md file)
 window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => {
   try {
@@ -1436,6 +1602,9 @@ function applyFontSizeFactor(factor: number) {
   
   // Save to localStorage
   localStorage.setItem('fontSizeFactor', factor.toString());
+  
+  // Re-paginate on font change
+  onAppearanceChanged();
 }
 
 // Initialize font size with saved value

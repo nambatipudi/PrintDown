@@ -80,6 +80,14 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuToggleTOC: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-toggle-toc');
     ipcRenderer.on('menu-toggle-toc', callback);
+  },
+  onTogglePagePreview: (cb: () => void) => {
+    ipcRenderer.removeAllListeners('menu-toggle-page-preview');
+    ipcRenderer.on('menu-toggle-page-preview', cb);
+  },
+  onOpenPageSetup: (cb: () => void) => {
+    ipcRenderer.removeAllListeners('menu-open-page-setup');
+    ipcRenderer.on('menu-open-page-setup', cb);
   }
 });
 
@@ -95,6 +103,12 @@ contextBridge.exposeInMainWorld('themeAPI', {
   setCurrentTheme: async (themeName: string) => {
     return await ipcRenderer.invoke('set-current-theme', themeName);
   }
+});
+
+// Expose page API for page settings
+contextBridge.exposeInMainWorld('pageAPI', {
+  getSettings: () => ipcRenderer.invoke('pd:get-page-settings'),
+  setSettings: (s: any) => ipcRenderer.invoke('pd:set-page-settings', s)
 });
 
 // Expose app version
