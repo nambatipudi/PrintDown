@@ -51,11 +51,22 @@ try {
 }
 
 function createWindow() {
+  // Set window icon (Windows and Linux only - macOS ignores this option)
+  // macOS uses the .icns file from the app bundle automatically
+  let iconPath: string | undefined;
+  
+  if (process.platform !== 'darwin') {
+    // Windows and Linux: Set icon path
+    iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.png')
+      : path.join(__dirname, '..', 'build', 'icon.png');
+  }
+  
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'PrintDown',  // Set window title (appears in print dialog)
-    icon: path.join(__dirname, '../icon.png'),
+    ...(iconPath && { icon: iconPath }), // Only set icon for Windows/Linux
     backgroundColor: '#1e1e1e', // Set explicit background color to prevent white showing through
     titleBarStyle: 'default', // Ensure consistent title bar
     webPreferences: {

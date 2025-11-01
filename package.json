@@ -31,11 +31,11 @@
   "license": "MIT",
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^20.10.0",
+    "@types/node": "^22.18.13",
     "copy-webpack-plugin": "^12.0.0",
     "css-loader": "^6.8.1",
     "electron": "^39.0.0",
-    "electron-builder": "^26.0.12",
+    "electron-builder": "^25.1.8",
     "electron-store": "^8.1.0",
     "google-fonts-helper": "^3.7.3",
     "html-webpack-plugin": "^5.5.4",
@@ -43,14 +43,14 @@
     "style-loader": "^3.3.3",
     "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
-    "webpack": "^5.89.0",
+    "webpack": "^5.102.1",
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
     "markdown-it": "^14.1.0",
     "markdown-it-texmath": "^1.0.0",
     "mathjax": "^3.2.2",
-    "mermaid": "^10.9.4",
+    "mermaid": "^11.12.1",
     "raphael": "^2.3.0",
     "underscore": "^1.13.7"
   },
