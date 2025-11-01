@@ -164,45 +164,60 @@ function applyPageSettingsToCSS(ps: PageSettings) {
 async function paginateNow() {
   if (!pagePreviewEnabled || !window.PagedPolyfill) return;
 
-  // Ensure images/fonts are ready; MathJax already awaited in your pipeline.
-  await new Promise(r => setTimeout(r, 50));
+  try {
+    // Ensure images/fonts are ready; MathJax already awaited in your pipeline.
+    await new Promise(r => setTimeout(r, 50));
 
-  // Paged.js will take current DOM as source and build .pagedjs_pages
-  // Remove prior pagination if it exists (Paged.js appends a container to <body>)
-  const old = document.querySelector('.pagedjs_pages');
-  if (old) old.remove();
+    // Paged.js will take current DOM as source and build .pagedjs_pages
+    // Remove prior pagination if it exists (Paged.js appends a container to <body>)
+    const old = document.querySelector('.pagedjs_pages');
+    if (old) old.remove();
 
-  // Ensure markdown content is visible for Paged.js to read (it uses the DOM)
-  const markdownContent = document.getElementById('markdown-content');
-  const contentDiv = document.getElementById('content');
-  if (markdownContent && contentDiv) {
+    // Ensure markdown content is visible for Paged.js to read (it uses the DOM)
+    const markdownContent = document.getElementById('markdown-content');
+    const contentDiv = document.getElementById('content');
+    
+    if (!markdownContent || !contentDiv) {
+      console.warn('[PAGED] Required elements not found');
+      return;
+    }
+    
     // Make sure markdown content is in the content div and visible
     if (!contentDiv.contains(markdownContent)) {
       contentDiv.appendChild(markdownContent);
     }
     markdownContent.style.display = 'block';
-  }
 
-  // Kick off the preview; it's idempotent for your single article flow.
-  // Paged.js will read from #markdown-content and create .pagedjs_pages
-  await window.PagedPolyfill.preview();
+    console.log('[PAGED] Starting pagination...');
+    // Kick off the preview; it's idempotent for your single article flow.
+    // Paged.js will read from #markdown-content and create .pagedjs_pages
+    await window.PagedPolyfill.preview();
+    console.log('[PAGED] Pagination complete');
 
-  // Move .pagedjs_pages into #content if it was appended to body
-  const pagesContainer = document.querySelector('.pagedjs_pages');
-  if (pagesContainer && contentDiv) {
-    if (pagesContainer.parentElement !== contentDiv) {
-      // Move pages into content div
-      // Keep markdown-content in DOM (hidden) so we can toggle back
-      if (markdownContent && contentDiv.contains(markdownContent)) {
-        // Markdown content stays in DOM but will be hidden by CSS
-        markdownContent.style.display = 'none';
+    // Move .pagedjs_pages into #content if it was appended to body
+    const pagesContainer = document.querySelector('.pagedjs_pages');
+    if (pagesContainer && contentDiv) {
+      if (pagesContainer.parentElement !== contentDiv) {
+        // Move pages into content div
+        // Keep markdown-content in DOM (hidden) so we can toggle back
+        if (markdownContent && contentDiv.contains(markdownContent)) {
+          // Markdown content stays in DOM but will be hidden by CSS
+          markdownContent.style.display = 'none';
+        }
+        contentDiv.appendChild(pagesContainer);
+      } else {
+        // Already in content div, just hide markdown content
+        if (markdownContent) {
+          markdownContent.style.display = 'none';
+        }
       }
-      contentDiv.appendChild(pagesContainer);
-    } else {
-      // Already in content div, just hide markdown content
-      if (markdownContent) {
-        markdownContent.style.display = 'none';
-      }
+    }
+  } catch (error) {
+    console.error('[PAGED] Error during pagination:', error);
+    // Show markdown content in continuous mode as fallback
+    const markdownContent = document.getElementById('markdown-content');
+    if (markdownContent) {
+      markdownContent.style.display = 'block';
     }
   }
 }
