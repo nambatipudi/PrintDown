@@ -910,8 +910,16 @@ function toggleTOC() {
   localStorage.setItem('tocOpen', isOpen.toString());
 }
 
+// Track if TOC has been initialized to prevent double initialization
+let tocInitialized = false;
+
 // Initialize TOC toggle handlers
 function initializeTOC() {
+  if (tocInitialized) {
+    console.log('[TOC] Already initialized globally, skipping...');
+    return;
+  }
+  
   console.log('[TOC] Initializing TOC functionality');
   
   const tocToggle = document.getElementById('toc-toggle');
@@ -932,6 +940,7 @@ function initializeTOC() {
   // Check if we already have a click handler by checking for a data attribute
   if (tocToggle.hasAttribute('data-toc-initialized')) {
     console.log('[TOC] Already initialized, skipping...');
+    tocInitialized = true;
     return;
   }
   
@@ -947,6 +956,7 @@ function initializeTOC() {
   tocToggle.addEventListener('click', clickHandler);
   // Mark as initialized
   tocToggle.setAttribute('data-toc-initialized', 'true');
+  tocInitialized = true;
   
   console.log('[TOC] Click event listener added successfully');
   
@@ -1859,8 +1869,11 @@ if ((window as any).ipc) {
 
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
-  // Initialize TOC functionality
-  initializeTOC();
+  // Use requestAnimationFrame to ensure DOM is fully rendered
+  requestAnimationFrame(() => {
+    // Initialize TOC functionality
+    initializeTOC();
+  });
   
   const dropZone = document.body;
 
