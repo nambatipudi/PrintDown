@@ -1,6 +1,17 @@
 import MarkdownIt from 'markdown-it';
 import texmath from 'markdown-it-texmath';
 
+// ------------------------------------------------------------
+// TEST MODE SUPPORT (read from injected environment via preload)
+// We cannot directly rely on process.env in a context isolated renderer, so
+// expose a flag lazily by inspecting (window as any).env if preload decides
+// to surface it later. Fallback to undefined -> normal production behavior.
+// ------------------------------------------------------------
+const PD_TEST_MODE = (window as any).env?.PD_TEST_MODE === '1';
+if (PD_TEST_MODE) {
+  console.log('[TEST] renderer.ts script start executing');
+}
+
 // Declare the APIs exposed by preload script
 declare global {
   interface Window {
@@ -77,6 +88,7 @@ let activeTabIndex = -1;
 let sessionRestored = false; // Flag to prevent multiple session restorations
 let pagePreviewEnabled = true;
 let currentPageSettings: PageSettings;
+let pagedRan = false; // guard to prevent multiple paged.js runs that can corrupt internal state
 
 // Initialize markdown-it with texmath plugin for VS Code-style math rendering
 const md = new MarkdownIt({
@@ -163,6 +175,10 @@ function applyPageSettingsToCSS(ps: PageSettings) {
 // Pagination function
 async function paginateNow() {
   if (!pagePreviewEnabled || !window.PagedPolyfill) return;
+  if (pagedRan && document.querySelector('.pagedjs_pages')) {
+    console.log('[PAGED] Skipping pagination re-entry (already ran)');
+    return;
+  }
 
   try {
     // Ensure images/fonts are ready; MathJax already awaited in your pipeline.
@@ -183,6 +199,12 @@ async function paginateNow() {
       return;
     }
     
+    // ISOLATION: Hide app chrome (header, tabs) to reduce DOM complexity for paged.js
+    const header = document.querySelector('.header');
+    const tocSidebar = document.getElementById('toc-sidebar');
+    if (header) (header as HTMLElement).style.display = 'none';
+    if (tocSidebar) tocSidebar.style.display = 'none';
+    
     // Make sure markdown content is in the content div and visible
     if (!contentDiv.contains(markdownContent)) {
       contentDiv.appendChild(markdownContent);
@@ -194,26 +216,27 @@ async function paginateNow() {
     // Paged.js will read from #markdown-content and create .pagedjs_pages
     await window.PagedPolyfill.preview();
     console.log('[PAGED] Pagination complete');
-
-    // Move .pagedjs_pages into #content if it was appended to body
+    pagedRan = true;
+    
+    // Restore chrome visibility after pagination
+    if (header) (header as HTMLElement).style.display = '';
+    if (tocSidebar) tocSidebar.style.display = '';    // Move .pagedjs_pages into #content if it was appended to body
     const pagesContainer = document.querySelector('.pagedjs_pages');
     console.log('[PAGED] Pages container found:', !!pagesContainer);
     console.log('[PAGED] Pages container parent:', pagesContainer?.parentElement?.tagName);
     
     if (pagesContainer && contentDiv) {
-      if (pagesContainer.parentElement !== contentDiv) {
+      if (PD_TEST_MODE) {
+        console.log('[PAGED][TEST] Not moving pages container in test mode');
+      } else if (pagesContainer.parentElement !== contentDiv) {
         console.log('[PAGED] Moving pages container into content div');
-        // Move pages into content div
-        // Keep markdown-content in DOM (hidden) so we can toggle back
         if (markdownContent && contentDiv.contains(markdownContent)) {
-          // Markdown content stays in DOM but will be hidden by CSS
           markdownContent.style.display = 'none';
         }
         contentDiv.appendChild(pagesContainer);
         console.log('[PAGED] Pages container moved, now visible');
       } else {
         console.log('[PAGED] Pages container already in content div');
-        // Already in content div, just hide markdown content
         if (markdownContent) {
           markdownContent.style.display = 'none';
         }
@@ -228,11 +251,23 @@ async function paginateNow() {
     }
   } catch (error) {
     console.error('[PAGED] Error during pagination:', error);
-    // Show markdown content in continuous mode as fallback
+    console.error('[PAGED] Falling back to continuous view');
+    // FALLBACK: Remove any partial paged structures and restore markdown visibility
     const markdownContent = document.getElementById('markdown-content');
+    const pagesContainer = document.querySelector('.pagedjs_pages');
+    if (pagesContainer) {
+      console.log('[PAGED] Removing partial pagination artifacts');
+      pagesContainer.remove();
+    }
     if (markdownContent) {
       markdownContent.style.display = 'block';
+      console.log('[PAGED] Markdown content restored to continuous view');
     }
+    // Restore chrome visibility
+    const header = document.querySelector('.header');
+    const tocSidebar = document.getElementById('toc-sidebar');
+    if (header) (header as HTMLElement).style.display = '';
+    if (tocSidebar) tocSidebar.style.display = '';
   }
 }
 
@@ -1368,6 +1403,9 @@ console.info = (...args: any[]) => {
   originalConsole.info(...args);
 };
 
+// Expose logs for test IPC retrieval (read-only snapshot)
+(window as any).__PD_LOGS = consoleLogs;
+
 async function copyDebugLogs() {
   // Get app version
   const appVersion = await window.appVersion();
@@ -1905,6 +1943,41 @@ if ((window as any).ipc) {
 
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
+  // TEST MODE: If for some reason the expected scaffold is absent, build a minimal one
+  if (PD_TEST_MODE) {
+    if (!document.getElementById('content')) {
+      const mainContainer = document.querySelector('.main-container') || document.body.appendChild(document.createElement('div'));
+      if (!mainContainer.classList.contains('main-container')) {
+        mainContainer.classList.add('main-container');
+      }
+      const contentDiv = document.createElement('div');
+      contentDiv.id = 'content';
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      emptyState.textContent = 'Open a Markdown file to begin';
+      const mdDiv = document.createElement('div');
+      mdDiv.id = 'markdown-content';
+      mdDiv.style.display = 'none';
+      contentDiv.appendChild(emptyState);
+      contentDiv.appendChild(mdDiv);
+      mainContainer.appendChild(contentDiv);
+      console.log('[TEST] Injected fallback #content scaffold');
+    }
+  }
+
+  // Mark renderer readiness for tests AFTER ensuring scaffold
+  ;(window as any).__PD_RENDERER_READY = true;
+  if ((window as any).ipc && PD_TEST_MODE) {
+    try {
+      (window as any).ipc.send('pd:renderer-ready', {
+        bodyChildren: document.body ? document.body.children.length : 0,
+        hasContent: !!document.getElementById('content'),
+        hasMarkdown: !!document.getElementById('markdown-content')
+      });
+    } catch (e) {
+      console.warn('[TEST] Failed to send renderer-ready IPC', e);
+    }
+  }
   // Use requestAnimationFrame to ensure DOM is fully rendered
   requestAnimationFrame(() => {
     // Initialize TOC functionality

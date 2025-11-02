@@ -489,15 +489,12 @@
       display: block !important;
     }
 
-    /* Your actual print size & margins come from @page: */
+    /* Consolidated @page rule: size, margins, and page numbers */
     @page {
       size: var(--pd-page-size);
       margin: var(--pd-margin-top) var(--pd-margin-right)
               var(--pd-margin-bottom) var(--pd-margin-left);
-    }
-
-    /* Page numbers in the footer (works via paged.js margin boxes) */
-    @page {
+      
       @bottom-center {
         content: "Page " counter(page) " of " counter(pages);
         font-size: 10pt;

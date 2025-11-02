@@ -123,5 +123,15 @@ contextBridge.exposeInMainWorld('ipc', {
   },
   send: (channel: string, ...args: any[]) => {
     ipcRenderer.send(channel, ...args);
-  }
+  },
+  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
 });
+
+// TEST MODE: Expose limited env flags for renderer diagnostics
+contextBridge.exposeInMainWorld('env', {
+  PD_TEST_MODE: process.env.PD_TEST_MODE || ''
+});
+
+if (process.env.PD_TEST_MODE) {
+  console.log('[PRELOAD] Loaded with PD_TEST_MODE=1');
+}

@@ -228,6 +228,73 @@ Bob-->Alice: I am good thanks!
 ```
 ````
 
+## Development
+
+### Prerequisites
+- Node.js 16 or higher
+- npm or yarn
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/nambatipudi/PrintDown.git
+cd PrintDown
+
+# Install dependencies
+npm install
+
+# Build the application
+npm run build
+
+# Run in development mode
+npm run dev
+```
+
+### Testing
+
+PrintDown has a comprehensive test suite covering unit tests, E2E tests, and visual regression tests.
+
+```bash
+# Run all tests
+npm test
+
+# Run only unit tests (fast)
+npm run test:unit
+
+# Run E2E tests
+npm run test:e2e
+
+# Run E2E tests with UI visible
+npm run test:e2e:headed
+
+# Run E2E tests with debugger
+npm run test:e2e:debug
+
+# Generate coverage report
+npm run test:unit -- --coverage
+```
+
+For detailed testing documentation, see [docs/TESTING.md](docs/TESTING.md) and [TESTING-SUMMARY.md](TESTING-SUMMARY.md).
+
+### Building for Production
+
+```bash
+# Build for current platform
+npm run dist
+
+# Build for specific platforms
+npm run dist:mac    # macOS
+npm run dist:win    # Windows
+npm run dist:linux  # Linux
+```
+
+### VS Code Debugging
+
+Launch configurations are available in `.vscode/launch.json`:
+- Debug Main Process
+- Debug Renderer Process  
+- Debug Main + Renderer (compound)
+
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).

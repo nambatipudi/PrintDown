@@ -22,7 +22,8 @@ const defaultPage: PageSettings = {
   margins: { top: '0.75in', right: '0.75in', bottom: '0.75in', left: '0.75in' }
 };
 
-const store = new Store<{ session: SessionData; pageSettings?: PageSettings }>();
+// Wrap electron-store with loose typing to avoid TS method signature mismatch warnings in tests
+const store: any = new Store<{ session: SessionData; pageSettings?: PageSettings }>();
 
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
@@ -77,6 +78,24 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  // Test mode instrumentation
+  if (process.env.PD_TEST_MODE) {
+    console.log('[TEST] PD_TEST_MODE enabled');
+    const wc = mainWindow.webContents;
+    wc.on('did-start-loading', () => console.log('[TEST] did-start-loading'));
+    wc.on('dom-ready', () => console.log('[TEST] dom-ready'));
+    wc.on('did-finish-load', () => console.log('[TEST] did-finish-load URL=', wc.getURL()));
+    wc.on('did-fail-load', (_e, code, desc, url) => console.log('[TEST] did-fail-load', code, desc, url));
+    wc.on('did-finish-load', async () => {
+      try {
+        const probe = await wc.executeJavaScript(`(() => ({ bodyChildren: document.body ? document.body.children.length : -1, headChildren: document.head ? document.head.children.length : -1 }))()`);
+        console.log('[TEST] Post-load DOM probe:', probe);
+      } catch (e) {
+        console.log('[TEST] Post-load DOM probe failed', e);
+      }
+    });
+  }
 
   // Create menu
   const menu = Menu.buildFromTemplate([
@@ -728,3 +747,67 @@ ipcMain.handle('pd:set-page-settings', (_e, settings: PageSettings) => {
   store.set('pageSettings', settings);
   return true;
 });
+
+// Test diagnostics IPC (only if test mode)
+if (process.env.PD_TEST_MODE) {
+  let rendererReadyPayload: any = null;
+  ipcMain.on('pd:renderer-ready', (_e, payload) => {
+    rendererReadyPayload = { ts: Date.now(), ...payload };
+    console.log('[TEST] Renderer reported ready:', rendererReadyPayload);
+  });
+  ipcMain.handle('pd:test:get-dom-status', async () => {
+    if (!mainWindow) return { window: false };
+    try {
+      const status = await mainWindow.webContents.executeJavaScript(`(() => {
+        const c = document.getElementById('content');
+        const mc = document.getElementById('markdown-content');
+        const pages = document.querySelectorAll('.pagedjs_page').length;
+        const body = document.body;
+        const childTags = body ? Array.from(body.children).map(el => el.tagName + (el.id ? '#' + el.id : '')) : [];
+        const snippet = body ? body.innerHTML.substring(0, 400) : '';
+        return {
+          url: location.href,
+          hasContent: !!c,
+            hasMarkdown: !!mc,
+          markdownDisplay: mc ? getComputedStyle(mc).display : null,
+          pages,
+          headChildren: document.head ? document.head.children.length : 0,
+          bodyChildren: document.body ? document.body.children.length : 0,
+          childTags,
+          bodySnippet: snippet
+        };
+      })()`);
+      return { ...status, rendererReady: rendererReadyPayload };
+    } catch (e) {
+      return { error: String(e) };
+    }
+  });
+
+  // Open a markdown file directly in test mode (bypasses file dialog)
+  ipcMain.handle('pd:test:open-file', async (_e, filePath: string) => {
+    if (!mainWindow) return { success: false, error: 'no-window' };
+    try {
+      const exists = fs.existsSync(filePath);
+      if (!exists) return { success: false, error: 'not-found', filePath };
+      const content = fs.readFileSync(filePath, 'utf-8');
+      // Send same channel used by system open to reuse renderer logic
+      mainWindow.webContents.send('open-file-from-system', filePath);
+      return { success: true, length: content.length };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  });
+
+  ipcMain.handle('pd:test:get-paged-logs', async () => {
+    if (!mainWindow) return [];
+    try {
+      const logs = await mainWindow.webContents.executeJavaScript(`(() => {
+        const all = (window as any).__PD_LOGS || [];
+        return all.filter(l => l.message && l.message.startsWith('[PAGED]')).slice(-50);
+      })()`);
+      return logs;
+    } catch (e) {
+      return { error: String(e) };
+    }
+  });
+}
