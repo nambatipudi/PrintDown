@@ -505,8 +505,13 @@
       .header,
       .tabs,
       .theme-selector,
-      .font-size-controls {
+      .font-size-controls,
+      .toc-sidebar,
+      .toc-sidebar.open {
         display: none !important;
+        width: 0 !important;
+        min-width: 0 !important;
+        visibility: hidden !important;
       }
 
       /* Ensure tables don't get truncated */

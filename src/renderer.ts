@@ -385,6 +385,102 @@ const themes = {
     codeFontFamily: '"Consolas", "SF Mono", "Monaco", "Menlo", monospace',
     fontSize: '17px',
     lineHeight: '1.8'
+  },
+  'print-classic': {
+    body: '#ffffff',
+    content: '#ffffff',
+    text: '#1a1a1a',
+    heading: '#8b4513',
+    link: '#2c5aa0',
+    codeBg: '#f9f6f2',
+    codeText: '#a0522d',
+    quoteBg: '#f5f2ed',
+    quoteBorder: '#8b7355',
+    quoteText: '#4a4a4a',
+    fontFamily: '"Georgia", "Times New Roman", "Garamond", serif',
+    codeFontFamily: '"Courier New", "Courier", monospace',
+    fontSize: '12pt',
+    lineHeight: '1.5'
+  },
+  'print-modern': {
+    body: '#ffffff',
+    content: '#ffffff',
+    text: '#2a2a2a',
+    heading: '#0066cc',
+    link: '#0052a3',
+    codeBg: '#f0f4f8',
+    codeText: '#0077b6',
+    quoteBg: '#e8f4f8',
+    quoteBorder: '#4a9bd1',
+    quoteText: '#1a5490',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+    codeFontFamily: '"SF Mono", "Menlo", "Consolas", "Monaco", monospace',
+    fontSize: '11pt',
+    lineHeight: '1.6'
+  },
+  'print-elegant': {
+    body: '#fefefe',
+    content: '#fefefe',
+    text: '#2d2d2d',
+    heading: '#5f3dc4',
+    link: '#6741d9',
+    codeBg: '#f8f5fb',
+    codeText: '#7950f2',
+    quoteBg: '#f3f0ff',
+    quoteBorder: '#9775fa',
+    quoteText: '#5f3dc4',
+    fontFamily: '"Palatino Linotype", "Book Antiqua", Palatino, serif',
+    codeFontFamily: '"Courier New", Courier, monospace',
+    fontSize: '12pt',
+    lineHeight: '1.7'
+  },
+  'print-technical': {
+    body: '#ffffff',
+    content: '#ffffff',
+    text: '#1a1a1a',
+    heading: '#2f7c31',
+    link: '#1b5e20',
+    codeBg: '#f1f8f4',
+    codeText: '#2e7d32',
+    quoteBg: '#e8f5e9',
+    quoteBorder: '#66bb6a',
+    quoteText: '#2e7d32',
+    fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+    codeFontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+    fontSize: '11pt',
+    lineHeight: '1.5'
+  },
+  'print-report': {
+    body: '#ffffff',
+    content: '#ffffff',
+    text: '#212121',
+    heading: '#b8860b',
+    link: '#9a7e0a',
+    codeBg: '#fffef5',
+    codeText: '#b8860b',
+    quoteBg: '#fff9e6',
+    quoteBorder: '#daa520',
+    quoteText: '#855d00',
+    fontFamily: '"Calibri", "Trebuchet MS", sans-serif',
+    codeFontFamily: '"Courier New", Courier, monospace',
+    fontSize: '11pt',
+    lineHeight: '1.6'
+  },
+  'print-minimalist': {
+    body: '#ffffff',
+    content: '#ffffff',
+    text: '#333333',
+    heading: '#c92a2a',
+    link: '#e03131',
+    codeBg: '#fff5f5',
+    codeText: '#c92a2a',
+    quoteBg: '#ffe3e3',
+    quoteBorder: '#fa5252',
+    quoteText: '#c92a2a',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    codeFontFamily: '"SF Mono", "Menlo", "Consolas", monospace',
+    fontSize: '11pt',
+    lineHeight: '1.55'
   }
 };
 
@@ -677,6 +773,62 @@ async function renderTab(index: number) {
   // Generate and update TOC for the active tab
   generateTOC();
 }
+
+// Function to wait for all content rendering to complete
+// This ensures MathJax, Mermaid, and UML diagrams are fully rendered
+async function waitForRenderingComplete(): Promise<void> {
+  console.log('[RENDER] Waiting for all rendering to complete...');
+  
+  // Wait for MathJax rendering
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    try {
+      console.log('[RENDER] Waiting for MathJax...');
+      await window.MathJax.typesetPromise();
+      console.log('[RENDER] MathJax rendering complete');
+    } catch (err) {
+      console.warn('[RENDER] MathJax wait error:', err);
+    }
+  }
+  
+  // Wait for Mermaid diagrams (if any are pending)
+  if (window.mermaid) {
+    try {
+      console.log('[RENDER] Checking for pending Mermaid diagrams...');
+      const mermaidElements = document.querySelectorAll('.mermaid-diagram');
+      if (mermaidElements.length > 0) {
+        console.log(`[RENDER] Found ${mermaidElements.length} Mermaid diagrams, ensuring they're rendered`);
+        await window.mermaid.run({ querySelector: '.mermaid-diagram' });
+        console.log('[RENDER] Mermaid rendering complete');
+      }
+    } catch (err) {
+      console.warn('[RENDER] Mermaid wait error:', err);
+    }
+  }
+  
+  // Wait for UML sequence diagrams to settle
+  // These use Raphael.js which is synchronous, but give them a moment
+  const umlElements = document.querySelectorAll('.sequence-diagram');
+  if (umlElements.length > 0) {
+    console.log(`[RENDER] Found ${umlElements.length} UML diagrams, waiting for them to settle`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  // Wait one more frame for any final DOM updates
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  
+  console.log('[RENDER] All rendering complete');
+}
+
+// Expose function globally for PDF export
+(window as any).waitForRenderingComplete = waitForRenderingComplete;
+(window as any).renderTab = renderTab;
+(window as any).activeTabIndex = () => activeTabIndex;
+
+console.log('[RENDER] Functions exposed to window:', {
+  waitForRenderingComplete: typeof (window as any).waitForRenderingComplete,
+  renderTab: typeof (window as any).renderTab,
+  activeTabIndex: typeof (window as any).activeTabIndex
+});
 
 // Generate Table of Contents from headings
 function generateTOC() {
@@ -1485,6 +1637,13 @@ style.textContent = `
       overflow: visible !important;
       margin: 0 !important;
       padding: 0 !important;
+      display: block !important;
+    }
+    
+    .main-container {
+      height: auto !important;
+      overflow: visible !important;
+      display: block !important;
     }
     
     .header { display: none !important; }
@@ -1492,6 +1651,8 @@ style.textContent = `
     .font-size-controls { display: none !important; }
     .theme-selector { display: none !important; }
     .empty-state { display: none !important; }
+    .toc-sidebar { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
+    .toc-sidebar.open { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
     
     #content {
       padding: 0 !important;

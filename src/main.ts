@@ -211,6 +211,43 @@ function createWindow() {
               type: 'radio',
               checked: currentTheme === 'academic',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
+            },
+            { type: 'separator' },
+            {
+              label: 'Print Classic',
+              type: 'radio',
+              checked: currentTheme === 'print-classic',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-classic')
+            },
+            {
+              label: 'Print Modern',
+              type: 'radio',
+              checked: currentTheme === 'print-modern',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-modern')
+            },
+            {
+              label: 'Print Elegant',
+              type: 'radio',
+              checked: currentTheme === 'print-elegant',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-elegant')
+            },
+            {
+              label: 'Print Technical',
+              type: 'radio',
+              checked: currentTheme === 'print-technical',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-technical')
+            },
+            {
+              label: 'Print Report',
+              type: 'radio',
+              checked: currentTheme === 'print-report',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-report')
+            },
+            {
+              label: 'Print Minimalist',
+              type: 'radio',
+              checked: currentTheme === 'print-minimalist',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'print-minimalist')
             }
           ]
         },
@@ -532,8 +569,28 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
     
     console.log('[PDF] Received theme data:', themeData);
     
-    // Small delay to ensure dialog closes and content is stable
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Check what's actually in the document
+    console.log('[PDF] Analyzing content...');
+    await mainWindow.webContents.executeJavaScript(`
+      (function() {
+        const content = document.getElementById('markdown-content');
+        if (content) {
+          console.log('[PDF] Content height:', content.scrollHeight, 'px');
+          console.log('[PDF] Content has', content.children.length, 'child elements');
+          
+          // Count math elements
+          const mathElements = content.querySelectorAll('mjx-container');
+          console.log('[PDF] Found', mathElements.length, 'MathJax elements');
+          
+          // Count diagrams
+          const diagrams = content.querySelectorAll('.mermaid-diagram, .sequence-diagram');
+          console.log('[PDF] Found', diagrams.length, 'diagram elements');
+        }
+        
+        return 'content-check-complete';
+      })();
+    `);
+    console.log('[PDF] Content check completed');
     
     // Inject theme styles for PDF if theme data is provided
     if (themeData) {
@@ -602,26 +659,147 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       `);
     }
     
-    // Give Chromium time to apply @media print styles and complete layout
-    await mainWindow.webContents.executeJavaScript(
-      'new Promise(resolve => setTimeout(resolve, 300))'
-    );
-    
-    // Wait for another animation frame to ensure rendering is complete
-    await mainWindow.webContents.executeJavaScript(
-      'new Promise(requestAnimationFrame)'
-    );
+    // Log what we're about to capture
+    const contentInfo = await mainWindow.webContents.executeJavaScript(`
+      (function() {
+        const content = document.getElementById('markdown-content');
+        if (content) {
+          return {
+            height: content.scrollHeight,
+            children: content.children.length,
+            mathElements: content.querySelectorAll('mjx-container').length,
+            diagrams: content.querySelectorAll('.mermaid-diagram, .sequence-diagram').length
+          };
+        }
+        return null;
+      })();
+    `);
+    console.log('[PDF] Content analysis:', JSON.stringify(contentInfo, null, 2));
+    console.log('[PDF] Wait completed, ready to generate PDF');
     
     // Generate PDF from the current page
-    // Use CSS @page rules for size and margins
+    // Use explicit page size and margins for better control
+    console.log('[PDF] Starting PDF generation...');
+    console.log('[PDF] Document dimensions - height:', contentInfo?.height, 'px');
+    
+    // CRITICAL FIX: Remove scroll containers so printToPDF captures all content
+    // The #content div has overflow:auto which limits what gets captured
+    await mainWindow.webContents.executeJavaScript(`
+      (function() {
+        const content = document.getElementById('content');
+        const markdownContent = document.getElementById('markdown-content');
+        const mainContainer = document.querySelector('.main-container');
+        const tocSidebar = document.getElementById('toc-sidebar');
+        
+        // Store original styles
+        window._pdfOriginalStyles = {
+          contentOverflow: content.style.overflow,
+          contentHeight: content.style.height,
+          contentMaxHeight: content.style.maxHeight,
+          htmlHeight: document.documentElement.style.height,
+          bodyHeight: document.body.style.height,
+          bodyDisplay: document.body.style.display,
+          bodyFlex: document.body.style.flex,
+          mainContainerOverflow: mainContainer ? mainContainer.style.overflow : '',
+          mainContainerHeight: mainContainer ? mainContainer.style.height : '',
+          mainContainerDisplay: mainContainer ? mainContainer.style.display : '',
+          tocSidebarDisplay: tocSidebar ? tocSidebar.style.display : '',
+          tocSidebarWidth: tocSidebar ? tocSidebar.style.width : '',
+          tocSidebarVisibility: tocSidebar ? tocSidebar.style.visibility : ''
+        };
+        
+        // FORCE hide TOC sidebar regardless of its open state
+        if (tocSidebar) {
+          tocSidebar.style.display = 'none';
+          tocSidebar.style.width = '0';
+          tocSidebar.style.visibility = 'hidden';
+          console.log('[PDF] TOC sidebar forcefully hidden');
+        }
+        
+        // Remove all height/overflow constraints to show full content
+        // Fix body flex layout that constrains height
+        document.body.style.display = 'block';
+        document.body.style.height = 'auto';
+        document.body.style.overflow = 'visible';
+        document.documentElement.style.height = 'auto';
+        document.documentElement.style.overflow = 'visible';
+        
+        // Fix main container that has overflow:hidden
+        if (mainContainer) {
+          mainContainer.style.overflow = 'visible';
+          mainContainer.style.height = 'auto';
+          mainContainer.style.display = 'block';
+        }
+        
+        // Fix content div
+        content.style.overflow = 'visible';
+        content.style.height = 'auto';
+        content.style.maxHeight = 'none';
+        
+        console.log('[PDF] Removed scroll constraints, content now visible');
+        console.log('[PDF] Content scrollHeight:', markdownContent.scrollHeight, 'px');
+      })();
+    `);
+    
     const pdfData = await mainWindow.webContents.printToPDF({
-      printBackground: true,         // Keep dark boxes / code blocks etc.
-      preferCSSPageSize: true,       // Trust @page for size + margins
-      landscape: false
-      // Don't pass pageSize or margins here; CSS @page wins
+      printBackground: true,         
+      landscape: false,
+      pageSize: 'A4',               
+      margins: {                    
+        top: 0.5,
+        bottom: 0.5, 
+        left: 0.75,
+        right: 0.75
+      },
+      preferCSSPageSize: false,     
+      displayHeaderFooter: false,
+      generateDocumentOutline: false,
+      generateTaggedPDF: false,
+      pageRanges: ''                
     });
-
-    // Clean up the injected theme style
+    console.log('[PDF] PDF generation completed, size:', pdfData.length, 'bytes');
+    
+    // Restore original styles
+    await mainWindow.webContents.executeJavaScript(`
+      (function() {
+        if (window._pdfOriginalStyles) {
+          const content = document.getElementById('content');
+          const mainContainer = document.querySelector('.main-container');
+          const tocSidebar = document.getElementById('toc-sidebar');
+          const styles = window._pdfOriginalStyles;
+          
+          // Restore body styles
+          document.body.style.display = styles.bodyDisplay;
+          document.body.style.height = styles.bodyHeight;
+          document.body.style.overflow = '';
+          document.documentElement.style.height = styles.htmlHeight;
+          document.documentElement.style.overflow = '';
+          
+          // Restore main container
+          if (mainContainer) {
+            mainContainer.style.overflow = styles.mainContainerOverflow;
+            mainContainer.style.height = styles.mainContainerHeight;
+            mainContainer.style.display = styles.mainContainerDisplay;
+          }
+          
+          // Restore TOC sidebar
+          if (tocSidebar) {
+            tocSidebar.style.display = styles.tocSidebarDisplay;
+            tocSidebar.style.width = styles.tocSidebarWidth;
+            tocSidebar.style.visibility = styles.tocSidebarVisibility;
+            console.log('[PDF] TOC sidebar restored');
+          }
+          
+          // Restore content
+          content.style.overflow = styles.contentOverflow;
+          content.style.height = styles.contentHeight;
+          content.style.maxHeight = styles.contentMaxHeight;
+          
+          delete window._pdfOriginalStyles;
+          console.log('[PDF] Restored original styles');
+        }
+      })();
+    `);    // Clean up the injected theme style
     if (themeData) {
       await mainWindow.webContents.executeJavaScript(`
         (function() {
@@ -631,22 +809,34 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       `);
     }
 
-    // Write PDF to file synchronously
-    fs.writeFileSync(savePath, pdfData as any);
-    console.log('[PDF] File written successfully:', savePath);
-    
-    // Wait a bit to ensure file system has completed the write
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
-    // Now open the PDF with the default PDF viewer
-    shell.openPath(savePath).then((error) => {
+    // Write PDF to file asynchronously with proper error handling
+    try {
+      await fs.promises.writeFile(savePath, pdfData as any);
+      console.log('[PDF] File written successfully:', savePath);
+      
+      // Verify file was actually written and has correct size
+      const stats = await fs.promises.stat(savePath);
+      console.log('[PDF] File size:', stats.size, 'bytes');
+      
+      if (stats.size === 0) {
+        throw new Error('PDF file is empty');
+      }
+      
+      // Now open the PDF with the default PDF viewer
+      console.log('[PDF] Opening PDF file:', savePath);
+      const error = await shell.openPath(savePath);
+      
       if (error) {
         console.error('Failed to open PDF:', error);
         // Still return success since the PDF was created, just couldn't open it
       } else {
         console.log('PDF opened successfully:', savePath);
       }
-    });
+      
+    } catch (writeError) {
+      console.error('[PDF] Failed to write PDF file:', writeError);
+      throw writeError;
+    }
     
     return savePath;
   } catch (error) {
