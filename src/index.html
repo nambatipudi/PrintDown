@@ -112,7 +112,39 @@
     .tabs {
       display: flex;
       background: #252526;
-      overflow-x: hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex: 1;
+      scroll-behavior: smooth;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE and Edge */
+    }
+    
+    .tabs::-webkit-scrollbar {
+      display: none; /* Chrome, Safari, Opera */
+    }
+    
+    .tab-scroll-btn {
+      background: #2d2d30;
+      border: none;
+      color: #d4d4d4;
+      cursor: pointer;
+      padding: 0 8px;
+      font-size: 20px;
+      font-weight: normal;
+      transition: background 0.2s;
+      flex-shrink: 0;
+      min-width: 24px;
+      width: 24px;
+    }
+    
+    .tab-scroll-btn:hover {
+      background: #37373d;
+      color: #ffffff;
+    }
+    
+    .tab-scroll-btn:active {
+      background: #3e3e42;
     }
 
     .tab {
@@ -584,7 +616,13 @@
     <button class="toc-toggle" id="toc-toggle" title="Toggle Table of Contents">
       <span class="toc-icon">☰</span>
     </button>
+    <button class="tab-scroll-btn tab-scroll-left" id="tab-scroll-left" title="Scroll tabs left">
+      ‹
+    </button>
     <div class="tabs" id="tabs"></div>
+    <button class="tab-scroll-btn tab-scroll-right" id="tab-scroll-right" title="Scroll tabs right">
+      ›
+    </button>
   </div>
   <div class="main-container">
     <div class="toc-sidebar" id="toc-sidebar">

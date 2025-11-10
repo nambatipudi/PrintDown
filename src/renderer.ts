@@ -545,7 +545,7 @@ function applyTheme(themeName: keyof typeof themes) {
   
   // Reinitialize Mermaid with appropriate theme
   const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeName);
-  initMermaid(isDarkTheme);
+  initMermaid(isDarkTheme, themeName, theme);
   
   // Save theme preference
   localStorage.setItem('selectedTheme', themeName);
@@ -555,13 +555,31 @@ function applyTheme(themeName: keyof typeof themes) {
 let mermaidCounter = 0;
 
 // Initialize Mermaid
-function initMermaid(isDarkTheme: boolean = true) {
+function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default', theme?: any) {
   if (window.mermaid) {
+    // Create custom theme variables based on current PrintDown theme
+    const themeVariables = theme ? {
+      primaryColor: theme.heading,
+      primaryTextColor: theme.text,
+      primaryBorderColor: theme.quoteBorder,
+      lineColor: theme.link,
+      secondaryColor: theme.codeBg,
+      tertiaryColor: theme.quoteBg,
+      background: theme.body,
+      mainBkg: theme.body,
+      secondBkg: theme.codeBg,
+      tertiaryBkg: theme.quoteBg,
+      textColor: theme.text,
+      fontSize: '16px',
+      fontFamily: theme.fontFamily
+    } : undefined;
+
     window.mermaid.initialize({
       startOnLoad: false,
-      theme: isDarkTheme ? 'dark' : 'default',
+      theme: themeVariables ? 'base' : (isDarkTheme ? 'dark' : 'default'),
+      themeVariables: themeVariables,
       securityLevel: 'loose',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      fontFamily: theme?.fontFamily || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     });
   }
 }
@@ -718,6 +736,7 @@ async function renderTab(index: number) {
   // Process diagrams and math on every render (tabs rebuild the DOM each time)
     // Process Mermaid diagrams first
     await processMermaidDiagrams(contentDiv);
+    setupResizableMermaidDiagrams(contentDiv);
 
     // Process UML sequence diagrams
     processUMLSequenceDiagrams(contentDiv);
@@ -1067,22 +1086,49 @@ function setupResizableImages(container: HTMLElement) {
     wrapper.className = 'resizable-image';
 
     // Create unique key based on src
-    const key = `imageSize:${img.src}`;
+    const sizeKey = `imageSize:${img.src}`;
+    const posKey = `imagePos:${img.src}`;
 
     // Determine initial width percent (saved or image natural percent)
     const containerEl = container as HTMLElement;
     const containerWidth = containerEl.clientWidth || 1;
 
     // Use saved percent if available
-    const saved = localStorage.getItem(key);
-    let percent = saved ? parseFloat(saved) : Math.min(100, Math.round((img.clientWidth / containerWidth) * 100));
+    const savedSize = localStorage.getItem(sizeKey);
+    let percent = savedSize ? parseFloat(savedSize) : Math.min(100, Math.round((img.clientWidth / containerWidth) * 100));
     if (!isFinite(percent) || percent <= 0) percent = 100;
+
+    // Use saved position if available
+    const savedPos = localStorage.getItem(posKey);
+    let position = savedPos || 'center'; // 'left', 'center', 'right'
 
     // Move the image into wrapper
     img.replaceWith(wrapper);
     wrapper.appendChild(img);
     wrapper.style.width = `${percent}%`;
-    (wrapper as any)._imgKey = key;
+    
+    // Apply horizontal position
+    if (position === 'left') {
+      wrapper.style.marginLeft = '0';
+      wrapper.style.marginRight = 'auto';
+    } else if (position === 'right') {
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = '0';
+    } else {
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = 'auto';
+    }
+    
+    (wrapper as any)._imgSizeKey = sizeKey;
+    (wrapper as any)._imgPosKey = posKey;
+    (wrapper as any)._position = position;
+
+    // Add drag handle for positioning
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮⋮';
+    dragHandle.title = 'Drag to reposition horizontally (Left/Center/Right)';
+    wrapper.appendChild(dragHandle);
 
     // Add resize handle
     const handle = document.createElement('div');
@@ -1090,32 +1136,62 @@ function setupResizableImages(container: HTMLElement) {
     wrapper.appendChild(handle);
 
     let isResizing = false;
+    let isDragging = false;
     let startX = 0;
     let startWidthPx = 0;
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const dx = e.clientX - startX;
-      const newWidthPx = Math.max(50, startWidthPx + dx);
-      const parentWidth = containerEl.clientWidth || 1;
-      let newPercent = (newWidthPx / parentWidth) * 100;
-      newPercent = Math.max(20, Math.min(150, newPercent)); // 20%–150%
-      wrapper.style.width = `${newPercent}%`;
+      if (isResizing) {
+        const dx = e.clientX - startX;
+        const newWidthPx = Math.max(50, startWidthPx + dx);
+        const parentWidth = containerEl.clientWidth || 1;
+        let newPercent = (newWidthPx / parentWidth) * 100;
+        newPercent = Math.max(20, Math.min(150, newPercent)); // 20%–150%
+        wrapper.style.width = `${newPercent}%`;
+      } else if (isDragging) {
+        const containerRect = containerEl.getBoundingClientRect();
+        const mousePercent = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+        
+        // Determine position based on mouse location percentage
+        if (mousePercent < 33) {
+          wrapper.style.marginLeft = '0';
+          wrapper.style.marginRight = 'auto';
+          (wrapper as any)._position = 'left';
+        } else if (mousePercent > 66) {
+          wrapper.style.marginLeft = 'auto';
+          wrapper.style.marginRight = '0';
+          (wrapper as any)._position = 'right';
+        } else {
+          wrapper.style.marginLeft = 'auto';
+          wrapper.style.marginRight = 'auto';
+          (wrapper as any)._position = 'center';
+        }
+      }
     };
+    
     const onMouseUp = () => {
-      if (!isResizing) return;
-      isResizing = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      // Persist
-      const parentWidth = containerEl.clientWidth || 1;
-      const widthPx = wrapper.getBoundingClientRect().width;
-      const savePercent = Math.max(1, Math.min(500, (widthPx / parentWidth) * 100));
-      localStorage.setItem(key, savePercent.toFixed(2));
+      if (isResizing) {
+        isResizing = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        // Persist size
+        const parentWidth = containerEl.clientWidth || 1;
+        const widthPx = wrapper.getBoundingClientRect().width;
+        const savePercent = Math.max(1, Math.min(500, (widthPx / parentWidth) * 100));
+        localStorage.setItem(sizeKey, savePercent.toFixed(2));
+      } else if (isDragging) {
+        isDragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        wrapper.style.cursor = 'default';
+        // Persist position
+        localStorage.setItem(posKey, (wrapper as any)._position);
+      }
     };
 
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       isResizing = true;
       startX = e.clientX;
       startWidthPx = wrapper.getBoundingClientRect().width;
@@ -1123,10 +1199,169 @@ function setupResizableImages(container: HTMLElement) {
       document.addEventListener('mouseup', onMouseUp);
     });
 
-    // Double-click to reset
+    dragHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isDragging = true;
+      startX = e.clientX;
+      wrapper.style.cursor = 'move';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Double-click to reset both size and position
     wrapper.addEventListener('dblclick', () => {
       wrapper.style.width = '100%';
-      localStorage.removeItem(key);
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = 'auto';
+      (wrapper as any)._position = 'center';
+      localStorage.removeItem(sizeKey);
+      localStorage.removeItem(posKey);
+    });
+  });
+}
+
+function setupResizableMermaidDiagrams(container: HTMLElement) {
+  const diagrams = Array.from(container.querySelectorAll('.mermaid-diagram')) as HTMLElement[];
+  diagrams.forEach((diagram) => {
+    // Skip if already wrapped
+    if (diagram.parentElement && diagram.parentElement.classList.contains('resizable-mermaid')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'resizable-mermaid';
+
+    // Create unique key based on diagram id
+    const sizeKey = `mermaidSize:${diagram.id || 'default'}`;
+    const posKey = `mermaidPos:${diagram.id || 'default'}`;
+
+    // Determine initial width percent (saved or default 100%)
+    const containerEl = container as HTMLElement;
+    const containerWidth = containerEl.clientWidth || 1;
+
+    // Use saved percent if available
+    const savedSize = localStorage.getItem(sizeKey);
+    let percent = savedSize ? parseFloat(savedSize) : 100;
+    if (!isFinite(percent) || percent <= 0) percent = 100;
+
+    // Use saved position if available
+    const savedPos = localStorage.getItem(posKey);
+    let position = savedPos || 'center'; // 'left', 'center', 'right'
+
+    // Move the diagram into wrapper
+    diagram.replaceWith(wrapper);
+    wrapper.appendChild(diagram);
+    wrapper.style.width = `${percent}%`;
+    
+    // Apply horizontal position
+    if (position === 'left') {
+      wrapper.style.marginLeft = '0';
+      wrapper.style.marginRight = 'auto';
+    } else if (position === 'right') {
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = '0';
+    } else {
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = 'auto';
+    }
+    
+    (wrapper as any)._diagramSizeKey = sizeKey;
+    (wrapper as any)._diagramPosKey = posKey;
+    (wrapper as any)._position = position;
+
+    // Add drag handle for positioning
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮⋮';
+    dragHandle.title = 'Drag to reposition horizontally (Left/Center/Right)';
+    wrapper.appendChild(dragHandle);
+
+    // Add resize handle
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle';
+    wrapper.appendChild(handle);
+
+    let isResizing = false;
+    let isDragging = false;
+    let startX = 0;
+    let startWidthPx = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (isResizing) {
+        const dx = e.clientX - startX;
+        const newWidthPx = Math.max(50, startWidthPx + dx);
+        const parentWidth = containerEl.clientWidth || 1;
+        let newPercent = (newWidthPx / parentWidth) * 100;
+        newPercent = Math.max(20, Math.min(150, newPercent)); // 20%–150%
+        wrapper.style.width = `${newPercent}%`;
+      } else if (isDragging) {
+        const containerRect = containerEl.getBoundingClientRect();
+        const mousePercent = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+        
+        // Determine position based on mouse location percentage
+        if (mousePercent < 33) {
+          wrapper.style.marginLeft = '0';
+          wrapper.style.marginRight = 'auto';
+          (wrapper as any)._position = 'left';
+        } else if (mousePercent > 66) {
+          wrapper.style.marginLeft = 'auto';
+          wrapper.style.marginRight = '0';
+          (wrapper as any)._position = 'right';
+        } else {
+          wrapper.style.marginLeft = 'auto';
+          wrapper.style.marginRight = 'auto';
+          (wrapper as any)._position = 'center';
+        }
+      }
+    };
+    
+    const onMouseUp = () => {
+      if (isResizing) {
+        isResizing = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        // Persist size
+        const parentWidth = containerEl.clientWidth || 1;
+        const widthPx = wrapper.getBoundingClientRect().width;
+        const savePercent = Math.max(1, Math.min(500, (widthPx / parentWidth) * 100));
+        localStorage.setItem(sizeKey, savePercent.toFixed(2));
+      } else if (isDragging) {
+        isDragging = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        wrapper.style.cursor = 'default';
+        // Persist position
+        localStorage.setItem(posKey, (wrapper as any)._position);
+      }
+    };
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isResizing = true;
+      startX = e.clientX;
+      startWidthPx = wrapper.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    dragHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isDragging = true;
+      startX = e.clientX;
+      wrapper.style.cursor = 'move';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Double-click to reset both size and position
+    wrapper.addEventListener('dblclick', () => {
+      wrapper.style.width = '100%';
+      wrapper.style.marginLeft = 'auto';
+      wrapper.style.marginRight = 'auto';
+      (wrapper as any)._position = 'center';
+      localStorage.removeItem(sizeKey);
+      localStorage.removeItem(posKey);
     });
   });
 }
@@ -1537,7 +1772,8 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     // Apply theme
     currentThemeName = themeToApply;
     const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
-    initMermaid(isDarkTheme);
+    const themeConfig = themes[themeToApply];
+    initMermaid(isDarkTheme, themeToApply, themeConfig);
     applyTheme(themeToApply);
   
     // Apply font size
@@ -1653,6 +1889,12 @@ style.textContent = `
     .empty-state { display: none !important; }
     .toc-sidebar { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
     .toc-sidebar.open { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
+    
+    /* Hide interactive handles in print/PDF */
+    .resize-handle { display: none !important; }
+    .drag-handle { display: none !important; }
+    .resizable-image:hover { outline: none !important; }
+    .resizable-mermaid:hover { outline: none !important; }
     
     #content {
       padding: 0 !important;
@@ -1781,7 +2023,7 @@ screenStyle.textContent = `
   /* Resizable image wrapper */
   .resizable-image {
     position: relative;
-    display: inline-block;
+    display: block;
     margin: 12px auto;
     cursor: default;
   }
@@ -1803,6 +2045,53 @@ screenStyle.textContent = `
     border: 1px solid rgba(0,0,0,0.25);
     border-radius: 2px;
     cursor: nwse-resize;
+    z-index: 10;
+  }
+  
+  .drag-handle {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 8px;
+    background: rgba(100,149,237,0.9);
+    border: 1px solid rgba(0,0,0,0.3);
+    border-radius: 4px;
+    cursor: move;
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 14px;
+    color: white;
+    user-select: none;
+    opacity: 0.8;
+    transition: opacity 0.2s, background 0.2s;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  
+  .drag-handle:hover {
+    opacity: 1;
+    background: rgba(65,105,225,1);
+  }
+  
+  .resizable-image:hover .drag-handle,
+  .resizable-mermaid:hover .drag-handle {
+    opacity: 0.9;
+  }
+
+  /* Resizable Mermaid diagram wrapper */
+  .resizable-mermaid {
+    position: relative;
+    display: block;
+    margin: 12px auto;
+    cursor: default;
+  }
+  .resizable-mermaid .mermaid-diagram {
+    width: 100%;
+    height: auto;
+  }
+  .resizable-mermaid:hover {
+    outline: 1px dashed rgba(128,128,128,0.6);
   }
 `;
 document.head.appendChild(screenStyle);
@@ -1847,6 +2136,19 @@ if ((window as any).ipc) {
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize TOC functionality
   initializeTOC();
+  
+  // Setup tab scroll buttons
+  const tabsContainer = document.getElementById('tabs')!;
+  const scrollLeftBtn = document.getElementById('tab-scroll-left')!;
+  const scrollRightBtn = document.getElementById('tab-scroll-right')!;
+  
+  scrollLeftBtn.addEventListener('click', () => {
+    tabsContainer.scrollBy({ left: -200, behavior: 'smooth' });
+  });
+  
+  scrollRightBtn.addEventListener('click', () => {
+    tabsContainer.scrollBy({ left: 200, behavior: 'smooth' });
+  });
   
   const dropZone = document.body;
 
@@ -1961,7 +2263,8 @@ setTimeout(() => {
     // Apply theme
     currentThemeName = themeToApply;
     const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
-    initMermaid(isDarkTheme);
+    const themeConfig = themes[themeToApply];
+    initMermaid(isDarkTheme, themeToApply, themeConfig);
     applyTheme(themeToApply);
     
     // Get font size from localStorage or use default
