@@ -15,14 +15,19 @@ const store = new Store<{ session: SessionData }>();
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
 let currentTheme: string = 'dark'; // Track current theme
-  
-  // Toggle to enable/disable verbose protocol logging
-  const PROTOCOL_DEBUG = false;
+
+// File watchers: Map<filePath, FSWatcher>
+const fileWatchers = new Map<string, fs.FSWatcher>();
+
+// Track file stats to detect actual changes
+const fileStats = new Map<string, { mtime: Date; size: number }>();
+
+// Toggle to enable/disable verbose protocol logging
+const PROTOCOL_DEBUG = false;
 
 // Register custom protocol to serve local files for images
-console.log('[PROTOCOL] Registering printdown scheme...');
 try {
-  const schemeResult = protocol.registerSchemesAsPrivileged([
+  protocol.registerSchemesAsPrivileged([
     {
       scheme: 'printdown',
       privileges: {
@@ -33,7 +38,6 @@ try {
       }
     }
   ]);
-  console.log('[PROTOCOL] Scheme registration result:', schemeResult);
 } catch (error) {
   console.error('[PROTOCOL] Scheme registration failed:', error);
 }
@@ -75,6 +79,11 @@ function createWindow() {
           label: 'Open...',
           accelerator: 'CmdOrCtrl+O',
           click: () => mainWindow?.webContents.send('menu-open')
+        },
+        {
+          label: 'Save',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => mainWindow?.webContents.send('menu-save')
         },
         { type: 'separator' },
         {
@@ -349,29 +358,21 @@ app.whenReady().then(() => {
     // Remove the protocol part (printdown://)
     let url = request.url.replace(/^printdown:\/\//, '');
     
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ===== PROTOCOL REQUEST RECEIVED =====`);
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Request received: ${request.url}`);
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Parsed URL after protocol removal: ${url}`);
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Request headers:`, request.headers);
-    
     try {
       // Handle URL-encoded paths
       url = decodeURIComponent(url);
-      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] URL decoded: ${url}`);
       
       // On Windows, normalize common malformed drive-letter patterns from URL parsing
       if (process.platform === 'win32') {
         // Case 1: starts with /C:/... (triple-slash URL form) → drop the leading slash
         if (/^\/[A-Za-z]:\//.test(url)) {
           url = url.slice(1);
-          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Stripped leading slash for drive path: ${url}`);
         }
         // Case 2: starts with c/Users/... (host interpreted as drive without colon) → insert colon
         else if (/^[A-Za-z]\//.test(url)) {
           const drive = url.charAt(0).toUpperCase();
           const rest = url.slice(2); // skip 'c/'
           url = `${drive}:/${rest}`;
-          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Reconstructed drive path: ${url}`);
         }
       }
       
@@ -384,7 +385,6 @@ app.whenReady().then(() => {
           const driveLetter = url.charAt(0).toUpperCase();
           const restOfPath = url.slice(1);
           const correctedUrl = driveLetter + restOfPath;
-          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Corrected drive letter: ${correctedUrl}`);
           
           // Windows path - normalize slashes
           normalizedPath = path.normalize(correctedUrl.replace(/\//g, path.sep));
@@ -397,12 +397,8 @@ app.whenReady().then(() => {
         normalizedPath = path.resolve(url);
       }
       
-      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Normalized path: ${normalizedPath}`);
-      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] File exists: ${fs.existsSync(normalizedPath)}`);
-      
       // If file doesn't exist, try alternative path formats
       if (!fs.existsSync(normalizedPath)) {
-        if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] File not found, trying alternative paths...`);
         
         // Try with different case combinations
         const alternatives = [
@@ -414,18 +410,12 @@ app.whenReady().then(() => {
         ];
         
         for (const altPath of alternatives) {
-          if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Trying alternative: ${altPath}`);
           if (fs.existsSync(altPath)) {
-            if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ Found file at alternative path: ${altPath}`);
-            const stats = fs.statSync(altPath);
-            if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ File exists (${stats.size} bytes), serving: ${altPath}`);
             callback({ path: altPath });
             return;
           }
         }
       } else {
-        const stats = fs.statSync(normalizedPath);
-        if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] ✓ File exists (${stats.size} bytes), serving: ${normalizedPath}`);
         callback({ path: normalizedPath });
         return;
       }
@@ -457,29 +447,8 @@ app.whenReady().then(() => {
     }
   });
   
-  if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Protocol registration ${protocolSuccess ? 'succeeded' : 'failed'}`);
-  
   if (!protocolSuccess) {
     console.error('[PROTOCOL] CRITICAL: Protocol registration failed! Images will not load.');
-  } else {
-    if (PROTOCOL_DEBUG) console.log('[PROTOCOL] Protocol handler is ready and waiting for requests...');
-    
-    // Test if the expected image file exists
-    const testImagePath = path.join(process.cwd(), 'Test_Files', 'Science', 'Module 4', 'forces_box.png');
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Testing if image exists at: ${testImagePath}`);
-    if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Image exists: ${fs.existsSync(testImagePath)}`);
-    if (fs.existsSync(testImagePath)) {
-      const stats = fs.statSync(testImagePath);
-      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Image file size: ${stats.size} bytes`);
-    }
-    
-    // Test if protocol is actually registered
-    try {
-      const isProtocolRegistered = protocol.isProtocolRegistered('printdown');
-      if (PROTOCOL_DEBUG) console.log(`[PROTOCOL] Protocol 'printdown' is registered: ${isProtocolRegistered}`);
-    } catch (error) {
-      console.error('[PROTOCOL] Error checking protocol registration:', error);
-    }
   }
   
   createWindow();
@@ -542,6 +511,17 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
     return { success: true, content };
   } catch (error) {
     console.error('Error reading file:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return { success: false, error: errorMessage };
+  }
+});
+
+ipcMain.handle('write-file', async (event, filePath: string, content: string) => {
+  try {
+    fs.writeFileSync(filePath, content, 'utf-8');
+    return { success: true };
+  } catch (error) {
+    console.error('Error writing file:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: errorMessage };
   }
@@ -659,7 +639,30 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       `);
     }
     
-    // Log what we're about to capture
+    // Wait for renderer to signal all rendering complete (MathJax, Mermaid, UML)
+    try {
+      console.log('[PDF] Requesting renderer render completion handshake');
+      const renderComplete = await mainWindow.webContents.executeJavaScript(`
+        (async function() {
+          try {
+            if (window.waitForRenderingComplete) {
+              await window.waitForRenderingComplete();
+              return true;
+            }
+            console.warn('[PDF] waitForRenderingComplete not found on window');
+            return false;
+          } catch (err) {
+            console.error('[PDF] Error during waitForRenderingComplete:', err);
+            return false;
+          }
+        })();
+      `);
+      console.log('[PDF] Renderer render completion status:', renderComplete);
+    } catch (err) {
+      console.warn('[PDF] Handshake error (continuing anyway):', err);
+    }
+
+    // Log what we're about to capture AFTER handshake
     const contentInfo = await mainWindow.webContents.executeJavaScript(`
       (function() {
         const content = document.getElementById('markdown-content');
@@ -865,16 +868,14 @@ ipcMain.handle('set-current-theme', async (_event, themeName: string) => {
   if (mainWindow) {
     const currentMenu = Menu.getApplicationMenu();
     if (currentMenu) {
-      // Find and update theme menu items
-      const fileMenu = currentMenu.items.find(item => item.label === 'File');
-      if (fileMenu && fileMenu.submenu) {
-        const themeSubmenu = fileMenu.submenu.items.find(item => item.label === 'Theme');
-        if (themeSubmenu && themeSubmenu.submenu) {
-          themeSubmenu.submenu.items.forEach(item => {
-            const themeValue = item.label?.toLowerCase().replace(' ', '-');
-            item.checked = (themeValue === themeName);
-          });
-        }
+      // Find and update theme menu items under the View menu
+      const viewMenu = currentMenu.items.find(item => item.label === 'View');
+      const themeMenuItem = viewMenu?.submenu?.items.find(item => item.label === 'Theme');
+      if (themeMenuItem?.submenu) {
+        themeMenuItem.submenu.items.forEach(item => {
+          const normalizedLabel = item.label?.toLowerCase().replace(/\s+/g, '-');
+          item.checked = (normalizedLabel === themeName);
+        });
       }
     }
   }
@@ -882,4 +883,141 @@ ipcMain.handle('set-current-theme', async (_event, themeName: string) => {
 
 ipcMain.handle('get-app-version', async () => {
   return app.getVersion();
+});
+
+// IPC handler to get file stats (for detecting conflicts)
+ipcMain.handle('get-file-stats', async (_event, filePath: string) => {
+  try {
+    const stats = fs.statSync(filePath);
+    return { success: true, mtime: stats.mtime.getTime(), size: stats.size };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+// Watcher handler for external file changes
+function handleFileChange(filePath: string) {
+  console.log(`[WATCHER] File changed: ${filePath}`);
+  
+  // Notify renderer process about the file change
+  if (mainWindow) {
+    mainWindow.webContents.send('file-changed', filePath);
+  }
+}
+
+// Watch a file for changes
+function watchFile(filePath: string) {
+  if (fileWatchers.has(filePath)) {
+    console.log(`[WATCHER] Already watching file: ${filePath}`);
+    return;
+  }
+  
+  try {
+    // Store initial file stats
+    const stats = fs.statSync(filePath);
+    fileStats.set(filePath, { mtime: stats.mtime, size: stats.size });
+    
+    const watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
+      console.log(`[WATCHER] Event: ${eventType} on ${filePath}`);
+      
+      try {
+        // Check if file actually changed
+        const newStats = fs.statSync(filePath);
+        const oldStats = fileStats.get(filePath);
+        
+        if (oldStats && (newStats.mtime.getTime() !== oldStats.mtime.getTime() || newStats.size !== oldStats.size)) {
+          fileStats.set(filePath, { mtime: newStats.mtime, size: newStats.size });
+          handleFileChange(filePath);
+        }
+      } catch (err) {
+        console.error('[WATCHER] Error checking file stats:', err);
+      }
+    });
+    
+    fileWatchers.set(filePath, watcher);
+    console.log(`[WATCHER] Started watching file: ${filePath}`);
+  } catch (error) {
+    console.error(`[WATCHER] Failed to watch file ${filePath}:`, error);
+  }
+}
+
+// Unwatch a file
+function unwatchFile(filePath: string) {
+  const watcher = fileWatchers.get(filePath);
+  if (watcher) {
+    watcher.close();
+    fileWatchers.delete(filePath);
+    console.log(`[WATCHER] Stopped watching file: ${filePath}`);
+  }
+}
+
+// Watch a directory for changes
+function watchDirectory(dirPath: string) {
+  if (fileWatchers.has(dirPath)) {
+    console.log(`[WATCHER] Already watching directory: ${dirPath}`);
+    return;
+  }
+  
+  const watcher = fs.watch(dirPath, { persistent: true, recursive: true }, (eventType, filename) => {
+    if (filename) {
+      handleFileChange(path.join(dirPath, filename));
+    }
+  });
+  
+  fileWatchers.set(dirPath, watcher);
+  console.log(`[WATCHER] Started watching directory: ${dirPath}`);
+}
+
+// Unwatch a directory
+function unwatchDirectory(dirPath: string) {
+  const watcher = fileWatchers.get(dirPath);
+  if (watcher) {
+    watcher.close();
+    fileWatchers.delete(dirPath);
+    console.log(`[WATCHER] Stopped watching directory: ${dirPath}`);
+  }
+}
+
+// IPC handler to start watching a file
+ipcMain.handle('watch-file', async (_event, filePath: string) => {
+  try {
+    watchFile(filePath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error watching file:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+// IPC handler to stop watching a file
+ipcMain.handle('unwatch-file', async (_event, filePath: string) => {
+  try {
+    unwatchFile(filePath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error unwatching file:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+// IPC handler to watch a directory
+ipcMain.handle('watch-directory', async (_event, dirPath: string) => {
+  try {
+    watchDirectory(dirPath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error watching directory:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+// IPC handler to unwatch a directory
+ipcMain.handle('unwatch-directory', async (_event, dirPath: string) => {
+  try {
+    unwatchDirectory(dirPath);
+    return { success: true };
+  } catch (error) {
+    console.error('Error unwatching directory:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
 });

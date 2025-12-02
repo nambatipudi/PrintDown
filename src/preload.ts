@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('filePicker', {
 contextBridge.exposeInMainWorld('fileSystem', {
   readFile: async (filePath: string) => {
     return await ipcRenderer.invoke('read-file', filePath);
+  },
+  writeFile: async (filePath: string, content: string) => {
+    return await ipcRenderer.invoke('write-file', filePath, content);
   }
 });
 
@@ -80,6 +83,10 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuToggleTOC: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-toggle-toc');
     ipcRenderer.on('menu-toggle-toc', callback);
+  },
+  onMenuSave: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-save');
+    ipcRenderer.on('menu-save', callback);
   }
 });
 
@@ -94,6 +101,23 @@ contextBridge.exposeInMainWorld('clipboard', {
 contextBridge.exposeInMainWorld('themeAPI', {
   setCurrentTheme: async (themeName: string) => {
     return await ipcRenderer.invoke('set-current-theme', themeName);
+  }
+});
+
+// Expose file watching APIs
+contextBridge.exposeInMainWorld('fileWatch', {
+  watchFile: async (filePath: string) => {
+    return await ipcRenderer.invoke('watch-file', filePath);
+  },
+  unwatchFile: async (filePath: string) => {
+    return await ipcRenderer.invoke('unwatch-file', filePath);
+  },
+  getFileStats: async (filePath: string) => {
+    return await ipcRenderer.invoke('get-file-stats', filePath);
+  },
+  onFileChanged: (callback: (filePath: string) => void) => {
+    ipcRenderer.removeAllListeners('file-changed');
+    ipcRenderer.on('file-changed', (_event, filePath) => callback(filePath));
   }
 });
 

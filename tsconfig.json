@@ -11,7 +11,11 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "markdown-it-texmath": ["src/@types/markdown-it-texmath"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]

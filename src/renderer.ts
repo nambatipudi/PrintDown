@@ -1,5 +1,11 @@
 import MarkdownIt from 'markdown-it';
 import texmath from 'markdown-it-texmath';
+// CodeMirror imports
+import { EditorState, Compartment } from '@codemirror/state';
+import { EditorView, keymap } from '@codemirror/view';
+import { markdown } from '@codemirror/lang-markdown';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { search, searchKeymap } from '@codemirror/search';
 
 // Declare the APIs exposed by preload script
 declare global {
@@ -12,6 +18,7 @@ declare global {
     };
     fileSystem: {
       readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+      writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
     };
     session: {
       save: (sessionData: any) => Promise<any>;
@@ -30,12 +37,19 @@ declare global {
       onMenuFontReset: (callback: () => void) => void;
       onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
       onMenuToggleTOC: (callback: () => void) => void;
+      onMenuSave: (callback: () => void) => void;
     };
       themeAPI: {
         setCurrentTheme: (themeName: string) => Promise<void>;
       };
     clipboard: {
       writeText: (text: string) => void;
+    };
+    fileWatch: {
+      watchFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+      unwatchFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+      getFileStats: (filePath: string) => Promise<{ success: boolean; mtime?: number; size?: number; error?: string }>;
+      onFileChanged: (callback: (filePath: string) => void) => void;
     };
     appVersion: () => Promise<string>;
     MathJax: any;
@@ -50,6 +64,8 @@ interface Tab {
   title: string;
   isRendered?: boolean; // Track if tab has been rendered
   tocItems?: TOCItem[]; // Table of contents items
+  isDirty?: boolean; // Track unsaved changes
+  lastModified?: number; // Track when file was last loaded/saved (mtime)
 }
 
 interface TOCItem {
@@ -62,6 +78,17 @@ interface TOCItem {
 const tabs: Tab[] = [];
 let activeTabIndex = -1;
 let sessionRestored = false; // Flag to prevent multiple session restorations
+let isEditMode = false;
+let editorElement: HTMLTextAreaElement | null = null;
+let cmView: EditorView | null = null; // CodeMirror instance
+let editableCompartment = new Compartment(); // For toggling editable state
+let editToggleButton: HTMLButtonElement | null = null;
+let refreshButton: HTMLButtonElement | null = null;
+let renderDebounceHandle: number | null = null;
+const RENDER_DEBOUNCE_MS = 250;
+const SESSION_SAVE_DEBOUNCE_MS = 1500;
+let sessionSaveHandle: number | null = null;
+let currentThemeBaseFontSize = '16px';
 
 // Initialize markdown-it with texmath plugin for VS Code-style math rendering
 const md = new MarkdownIt({
@@ -486,7 +513,7 @@ const themes = {
 
 function applyTheme(themeName: keyof typeof themes) {
   currentThemeName = themeName; // Track current theme
-    window.themeAPI.setCurrentTheme(themeName); // Notify main process
+  window.themeAPI.setCurrentTheme(themeName); // Notify main process
   const theme = themes[themeName];
   
   // Only apply theme to the content area, not the whole app
@@ -496,8 +523,9 @@ function applyTheme(themeName: keyof typeof themes) {
   const mdContent = document.getElementById('markdown-content')!;
   mdContent.style.color = theme.text;
   mdContent.style.fontFamily = theme.fontFamily;
-  mdContent.style.fontSize = theme.fontSize;
   mdContent.style.lineHeight = theme.lineHeight;
+  currentThemeBaseFontSize = theme.fontSize || '16px';
+  updateContentFontSize();
   
   // Apply theme via CSS custom properties
   document.documentElement.style.setProperty('--theme-body', theme.body);
@@ -586,47 +614,39 @@ function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default',
 
 // Process Mermaid diagrams
 async function processMermaidDiagrams(container: HTMLElement) {
-  console.log('[MERMAID] Starting Mermaid diagram processing');
-  
   if (!window.mermaid) {
-    console.warn('[MERMAID] Mermaid is not loaded yet');
     return;
   }
 
-  // Find all code blocks with language "mermaid"
-  const mermaidBlocks = container.querySelectorAll('code.language-mermaid');
-  console.log(`[MERMAID] Found ${mermaidBlocks.length} Mermaid diagram blocks`);
+  // Find unprocessed mermaid code blocks
+  const mermaidBlocks = container.querySelectorAll('code.language-mermaid:not([data-mermaid-processed])');
   
   for (const block of Array.from(mermaidBlocks)) {
     const pre = block.parentElement;
     if (!pre || pre.tagName !== 'PRE') {
-      console.warn('[MERMAID] Mermaid code block has no pre parent, skipping');
       continue;
     }
     
     // Get the diagram code
     const code = block.textContent || '';
-    console.log(`[MERMAID] Processing diagram:\n${code}`);
     
     // Create a container for the diagram
     const diagramId = `mermaid-diagram-${mermaidCounter++}`;
     const diagramDiv = document.createElement('div');
     diagramDiv.className = 'mermaid-diagram';
     diagramDiv.id = diagramId;
-    diagramDiv.textContent = code;
+  diagramDiv.textContent = code;
+  (block as HTMLElement).setAttribute('data-mermaid-processed', 'true');
     
     // Replace the code block with the diagram container
     pre.replaceWith(diagramDiv);
-    console.log(`[MERMAID] Replaced code block with diagram container: ${diagramId}`);
   }
   
   // Render all diagrams
   try {
-    console.log('[MERMAID] Starting Mermaid.run()');
     await window.mermaid.run({
       querySelector: '.mermaid-diagram'
     });
-    console.log('[MERMAID] Mermaid.run() completed successfully');
   } catch (err) {
     console.error('[MERMAID] Mermaid rendering error:', err);
     console.error('[MERMAID] Error details:', JSON.stringify(err, null, 2));
@@ -635,56 +655,257 @@ async function processMermaidDiagrams(container: HTMLElement) {
 
 // Process UML sequence diagrams
 function processUMLSequenceDiagrams(container: HTMLElement) {
-  console.log('[UML] Starting UML sequence diagram processing');
-  
   if (!window.Diagram) {
-    console.warn('[UML] js-sequence-diagrams is not loaded yet');
     return;
   }
 
-  // Find all code blocks with language "uml-sequence-diagram"
-  const umlBlocks = container.querySelectorAll('code.language-uml-sequence-diagram');
-  console.log(`[UML] Found ${umlBlocks.length} UML sequence diagram blocks`);
+  // Find unprocessed UML sequence diagram blocks
+  const umlBlocks = container.querySelectorAll('code.language-uml-sequence-diagram:not([data-uml-processed])');
   
   for (const block of Array.from(umlBlocks)) {
     const pre = block.parentElement;
     if (!pre || pre.tagName !== 'PRE') {
-      console.warn('[UML] UML code block has no pre parent, skipping');
       continue;
     }
     
     // Get the diagram code
     const code = block.textContent || '';
-    console.log(`[UML] Processing diagram:\n${code}`);
     
     // Create a container for the diagram
     const diagramDiv = document.createElement('div');
     diagramDiv.className = 'uml-sequence-diagram';
     
     // Replace the code block with the diagram container
-    pre.replaceWith(diagramDiv);
-    console.log('[UML] Replaced code block with diagram container');
-    
-    // Render the diagram
+  pre.replaceWith(diagramDiv);
+    (block as HTMLElement).setAttribute('data-uml-processed', 'true');    // Render the diagram
     try {
-      console.log('[UML] Starting Diagram.parse()');
       const diagram = window.Diagram.parse(code);
-      console.log('[UML] Starting drawSVG()');
       diagram.drawSVG(diagramDiv, { theme: 'simple' });
-      console.log('[UML] drawSVG() completed successfully');
     } catch (err) {
       console.error('[UML] UML sequence diagram rendering error:', err);
       console.error('[UML] Error details:', JSON.stringify(err, null, 2));
       diagramDiv.textContent = 'Error rendering diagram: ' + (err as Error).message;
     }
   }
+}
+
+function initializeEditor() {
+  const container = document.getElementById('editor-container');
+  if (!container) {
+    return;
+  }
+  if (cmView) {
+    refreshEditorFromTab();
+    return;
+  }
   
-  console.log('[UML] UML sequence diagram processing complete');
+  // Custom theme following CodeMirror styling best practices
+  const customTheme = EditorView.theme({
+    "&": {
+      height: "100%",
+      backgroundColor: "#1e1e1e",
+      fontSize: "14px",
+      color: "#d4d4d4"
+    },
+    "&.cm-focused": {
+      outline: "none"
+    },
+    ".cm-scroller": {
+      overflow: "auto"
+    },
+    ".cm-content": {
+      padding: "12px"
+    },
+    ".cm-line": {
+      padding: "0",
+      lineHeight: "1.6"
+    },
+    ".cm-gutters": {
+      backgroundColor: "#1e1e1e",
+      color: "#858585",
+      border: "none"
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "#2d2d30"
+    }
+  });
+  
+  const initialDoc = activeTabIndex >= 0 ? tabs[activeTabIndex].content : '';
+  const onUpdate = EditorView.updateListener.of(v => {
+    if (v.docChanged && activeTabIndex >= 0 && isEditMode) {
+      const tab = tabs[activeTabIndex];
+      tab.content = v.state.doc.toString();
+      tab.isDirty = true;
+      updateTabUI();
+      schedulePreviewRender();
+      scheduleSessionSave();
+    }
+  });
+  const state = EditorState.create({
+    doc: initialDoc,
+    extensions: [
+      customTheme,
+      markdown(), 
+      history(), 
+      search(),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]), 
+      onUpdate,
+      editableCompartment.of(EditorView.editable.of(false))
+    ]
+  });
+  cmView = new EditorView({ state, parent: container });
+  
+  // Immediately reset scroll position to prevent blank space at top
+  try {
+    cmView.scrollDOM.scrollTop = 0;
+  } catch {}
+  
+  // Force CodeMirror to recalculate layout after insertion into DOM
+  requestAnimationFrame(() => {
+    try {
+      if (cmView) {
+        // Trigger a measure/layout pass
+        cmView.requestMeasure();
+        // Reset scroll again after measure
+        cmView.scrollDOM.scrollTop = 0;
+        cmView.scrollDOM.scrollLeft = 0;
+        // Force viewport to start at line 0
+        cmView.dispatch({
+          effects: EditorView.scrollIntoView(0, { y: "start", yMargin: 0 })
+        });
+      }
+    } catch (e) {
+      // Layout measure failed, continue
+    }
+  });
+}
+
+function refreshEditorFromTab(skipContentUpdate = false) {
+  if (!cmView) return;
+  const tab = tabs[activeTabIndex];
+  if (!tab) {
+    cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: '' } });
+    return;
+  }
+  if (!skipContentUpdate) {
+    const current = cmView.state.doc.toString();
+    if (current !== tab.content) {
+      cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: tab.content } });
+    }
+    // Reset scroll to top when loading a new tab's content to prevent large blank offset
+    try { cmView.scrollDOM.scrollTop = 0; } catch {}
+  }
+  // Update editable state based on isEditMode
+  cmView.dispatch({
+    effects: editableCompartment.reconfigure(EditorView.editable.of(isEditMode))
+  });
+  cmView.dom.classList.toggle('cm-readonly', !isEditMode);
+}
+
+// Ensure editor focuses after async rendering/layout settles
+function focusEditorDeferred() {
+  if (!cmView || !isEditMode) return;
+  try { cmView.focus(); } catch {}
+  setTimeout(() => { try { cmView?.focus(); } catch {} }, 0);
+  requestAnimationFrame(() => { try { cmView?.focus(); } catch {} });
+}
+
+// Enforce editable state if it was lost (diagnostic + recovery)
+function enforceEditable() {
+  if (!cmView) return;
+  const current = cmView.state.facet(EditorView.editable);
+  // Always reassert compartment to current desired mode
+  cmView.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(isEditMode)) });
+  cmView.dom.classList.toggle('cm-readonly', !isEditMode);
+  if (isEditMode && !current) {
+    // Small doc no-op change can sometimes wake CM after facet flip
+    cmView.dispatch({ changes: [] });
+  }
+  // Ensure editor pane is visible when edit mode is enabled
+  if (isEditMode) {
+    const editorPane = document.getElementById('editor-pane');
+    const splitter = document.getElementById('splitter');
+    if (editorPane && splitter) {
+      editorPane.style.display = 'flex';
+      splitter.style.display = 'block';
+    }
+  }
+}
+
+function setEditMode(enabled: boolean) {
+  const splitContainer = document.getElementById('split-container');
+  const editorPane = document.getElementById('editor-pane');
+  const splitter = document.getElementById('splitter');
+  if (!splitContainer || !editorPane || !splitter) {
+    return;
+  }
+
+  isEditMode = enabled;
+  splitContainer.classList.toggle('split-view', enabled);
+  splitContainer.classList.toggle('view-only', !enabled);
+
+  if (enabled) {
+    // Make pane visible before creating CodeMirror so measurements are correct
+    editorPane.style.display = 'flex';
+    splitter.style.display = 'block';
+    if (!cmView) {
+      initializeEditor();
+    }
+  } else {
+    editorPane.style.display = 'none';
+    splitter.style.display = 'none';
+  }
+  editToggleButton?.classList.toggle('active', enabled);
+
+  if (cmView) {
+    refreshEditorFromTab();
+    // Force a re-measure & reset scroll after layout changes
+    requestAnimationFrame(() => {
+      try { if (cmView) cmView.scrollDOM.scrollTop = 0; } catch {}
+    });
+  }
+}
+
+function handleEditorInput() {
+  // CodeMirror handles updates via updateListener
+}
+
+function schedulePreviewRender() {
+  if (renderDebounceHandle) {
+    window.clearTimeout(renderDebounceHandle);
+  }
+  renderDebounceHandle = window.setTimeout(() => {
+    renderDebounceHandle = null;
+    if (activeTabIndex >= 0) {
+      renderTab(activeTabIndex, { skipEditorUpdate: true }).catch(error => {
+        console.error('[EDITOR] Failed to re-render preview:', error);
+      });
+    }
+  }, RENDER_DEBOUNCE_MS);
+}
+function scheduleSessionSave() {
+  if (sessionSaveHandle) {
+    window.clearTimeout(sessionSaveHandle);
+  }
+  const indicator = document.getElementById('status-indicator');
+  if (indicator) {
+    indicator.textContent = 'Saving…';
+    indicator.className = 'saving';
+  }
+  sessionSaveHandle = window.setTimeout(() => {
+    sessionSaveHandle = null;
+    saveSession();
+    showStatus('Session saved', 'success');
+  }, SESSION_SAVE_DEBOUNCE_MS);
 }
 
 // Note: Math extraction/restoration functions removed - markdown-it-texmath handles this now
 
-async function renderTab(index: number) {
+interface RenderOptions {
+  skipEditorUpdate?: boolean;
+}
+
+async function renderTab(index: number, options: RenderOptions = {}) {
   activeTabIndex = index;
   const tab = tabs[index];
   
@@ -694,34 +915,37 @@ async function renderTab(index: number) {
   const emptyState = document.querySelector('.empty-state') as HTMLElement;
   
   // Process markdown with markdown-it (no manual math extraction needed!)
-  console.log('[MARKDOWN] Starting markdown-it rendering');
   let html = md.render(tab.content);
-  console.log('[MARKDOWN] Rendering complete');
   
-  // Convert relative image paths to use the custom protocol
-  // This allows Electron to load images from the same directory as the markdown file
+  // SAFE image path rewriting using DOM (preserve absolute, file://, UNC, drive-letter paths)
   if (tab.filePath) {
-    // Get directory path (handle both / and \ as separators)
-    const pathParts = tab.filePath.split(/[/\\]/);
-    pathParts.pop(); // Remove filename
-    const baseDir = pathParts.join('/'); // Rejoin with forward slashes
-    console.log('[IMAGE] Base directory:', baseDir);
-    
-    html = html.replace(/<img([^>]*?)src="([^"]*?)"/g, (match, attrs, src) => {
-      // Skip absolute URLs (http://, https://, data:, printdown:)
-      if (src.match(/^(https?:|data:|printdown:)/)) {
-        return match;
-      }
-      
-      // For relative paths, convert to absolute using the custom protocol
-      const absolutePath = `${baseDir}/${src}`.replace(/\/+/g, '/'); // Normalize multiple slashes
-      // Remove any leading slashes from absolutePath as the protocol already provides them
-      const cleanPath = absolutePath.replace(/^\/+/, '');
-      const imageUrl = `printdown:///${cleanPath}`;
-      console.log('[IMAGE] Converting:', src, '→', imageUrl);
-      // Add error handler to debug image loading issues
-      return `<img${attrs}src="${imageUrl}" onerror="console.error('[IMAGE] Failed to load:', this.src); console.error('[IMAGE] Error details:', event);"`;
-    });
+    try {
+      const pathParts = tab.filePath.split(/[/\\]/);
+      pathParts.pop();
+      const baseDir = pathParts.join('/');
+      const temp = document.createElement('div');
+      temp.innerHTML = html;
+      const imgs = Array.from(temp.querySelectorAll('img')) as HTMLImageElement[];
+      imgs.forEach(img => {
+        const originalSrc = img.getAttribute('src') || '';
+        if (!originalSrc) return;
+        if (/^(https?:|data:|printdown:|file:\/\/)/i.test(originalSrc)) return; // already absolute/protocol
+        if (/^\\\\/.test(originalSrc)) return; // UNC path
+        if (/^[A-Za-z]:[\\/]/.test(originalSrc)) return; // Windows absolute
+        if (originalSrc.startsWith('/')) return; // Unix absolute
+        let cleaned = originalSrc.replace(/^\.\//, '').replace(/^\.\\/, '');
+        const joined = `${baseDir}/${cleaned}`;
+        const normalized = joined.replace(/\\/g, '/').replace(/\/+/g, '/');
+        const pathWithLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
+        const protocolUrl = `printdown://${pathWithLeadingSlash}`;
+        img.setAttribute('src', protocolUrl);
+        img.setAttribute('data-original-src', originalSrc);
+        img.setAttribute('onerror', "console.error('[IMAGE] Failed to load:', this.src);");
+      });
+      html = temp.innerHTML;
+    } catch (err) {
+      console.error('[IMAGE] DOM rewrite error:', err);
+    }
   }
   
   // Set the HTML
@@ -744,38 +968,12 @@ async function renderTab(index: number) {
     // Typeset math with MathJax
     if (window.MathJax && window.MathJax.typesetPromise) {
       try {
-        console.log('[MATHJAX] Starting MathJax.typesetPromise()');
-        console.log('[MATHJAX] MathJax version:', window.MathJax.version);
-        console.log('[MATHJAX] Content div has HTML length:', contentDiv.innerHTML.length);
-        
-        await window.MathJax.typesetPromise([contentDiv]);
-        console.log('[MATHJAX] typesetPromise completed');
-        
-        // Give MathJax a bit more time to complete DOM updates
+        await window.MathJax.typesetPromise([contentDiv]);        // Give MathJax a bit more time to complete DOM updates
         await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Log information about what was rendered
-        const mathContainers = contentDiv.querySelectorAll('mjx-container');
-        console.log(`[MATHJAX] Successfully rendered ${mathContainers.length} math expressions`);
-        mathContainers.forEach((container, index) => {
-          const content = container.textContent || '';
-          console.log(`[MATHJAX] Rendered math [${index}]:`, content);
-        });
-        
-        // Check for any text that might look like unrendered math
-        const mathElements = contentDiv.querySelectorAll('.MathJax, mjx-container');
-        const allText = contentDiv.textContent || '';
-        const suspiciousPatterns = allText.match(/[\\][\w\{\}^_]+/g);
-        if (suspiciousPatterns && suspiciousPatterns.length > 0) {
-          console.warn('[MATHJAX] Found potential unrendered LaTeX commands:', suspiciousPatterns);
-        }
       } catch (err) {
         console.error('[MATHJAX] MathJax typeset error:', err);
         console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
       }
-    } else {
-      console.warn('[MATHJAX] MathJax not available or typesetPromise not found');
-      console.warn('[MATHJAX] window.MathJax:', window.MathJax);
     }
     
   
@@ -787,7 +985,10 @@ async function renderTab(index: number) {
   }
 
   updateTabUI();
-  saveSession();
+  if (!options.skipEditorUpdate) {
+    scheduleSessionSave();
+  }
+  refreshEditorFromTab(options.skipEditorUpdate);
   
   // Generate and update TOC for the active tab
   generateTOC();
@@ -796,31 +997,24 @@ async function renderTab(index: number) {
 // Function to wait for all content rendering to complete
 // This ensures MathJax, Mermaid, and UML diagrams are fully rendered
 async function waitForRenderingComplete(): Promise<void> {
-  console.log('[RENDER] Waiting for all rendering to complete...');
-  
   // Wait for MathJax rendering
   if (window.MathJax && window.MathJax.typesetPromise) {
     try {
-      console.log('[RENDER] Waiting for MathJax...');
       await window.MathJax.typesetPromise();
-      console.log('[RENDER] MathJax rendering complete');
     } catch (err) {
-      console.warn('[RENDER] MathJax wait error:', err);
+      // MathJax error handled elsewhere
     }
   }
   
   // Wait for Mermaid diagrams (if any are pending)
   if (window.mermaid) {
     try {
-      console.log('[RENDER] Checking for pending Mermaid diagrams...');
       const mermaidElements = document.querySelectorAll('.mermaid-diagram');
       if (mermaidElements.length > 0) {
-        console.log(`[RENDER] Found ${mermaidElements.length} Mermaid diagrams, ensuring they're rendered`);
         await window.mermaid.run({ querySelector: '.mermaid-diagram' });
-        console.log('[RENDER] Mermaid rendering complete');
       }
     } catch (err) {
-      console.warn('[RENDER] Mermaid wait error:', err);
+      // Mermaid error handled elsewhere
     }
   }
   
@@ -828,26 +1022,17 @@ async function waitForRenderingComplete(): Promise<void> {
   // These use Raphael.js which is synchronous, but give them a moment
   const umlElements = document.querySelectorAll('.sequence-diagram');
   if (umlElements.length > 0) {
-    console.log(`[RENDER] Found ${umlElements.length} UML diagrams, waiting for them to settle`);
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   
   // Wait one more frame for any final DOM updates
   await new Promise(resolve => requestAnimationFrame(resolve));
-  
-  console.log('[RENDER] All rendering complete');
 }
 
 // Expose function globally for PDF export
 (window as any).waitForRenderingComplete = waitForRenderingComplete;
 (window as any).renderTab = renderTab;
 (window as any).activeTabIndex = () => activeTabIndex;
-
-console.log('[RENDER] Functions exposed to window:', {
-  waitForRenderingComplete: typeof (window as any).waitForRenderingComplete,
-  renderTab: typeof (window as any).renderTab,
-  activeTabIndex: typeof (window as any).activeTabIndex
-});
 
 // Generate Table of Contents from headings
 function generateTOC() {
@@ -962,47 +1147,33 @@ function setActiveTOCItem(activeId: string) {
 
 // Toggle TOC sidebar
 function toggleTOC() {
-  console.log('[TOC] toggleTOC() called');
   const sidebar = document.getElementById('toc-sidebar');
   if (!sidebar) {
     console.error('[TOC] Sidebar element not found!');
     return;
   }
   
-  console.log('[TOC] Toggling sidebar, current classes:', sidebar.classList.toString());
   sidebar.classList.toggle('open');
   
   // Save TOC state
   const isOpen = sidebar.classList.contains('open');
-  console.log('[TOC] Sidebar is now:', isOpen ? 'open' : 'closed');
   localStorage.setItem('tocOpen', isOpen.toString());
 }
 
 // Initialize TOC toggle handlers
 function initializeTOC() {
-  console.log('[TOC] Initializing TOC functionality');
-  
   const tocToggle = document.getElementById('toc-toggle');
   const tocClose = document.getElementById('toc-close');
   const tocSidebar = document.getElementById('toc-sidebar');
   
-  console.log('[TOC] Elements found:', {
-    tocToggle: !!tocToggle,
-    tocClose: !!tocClose,
-    tocSidebar: !!tocSidebar
-  });
-  
   if (tocToggle) {
     // Check if we already have a click handler by checking for a data attribute
     if (tocToggle.hasAttribute('data-toc-initialized')) {
-      console.log('[TOC] Already initialized, skipping...');
       return;
     }
     
-    console.log('[TOC] Adding click event to toggle button');
     // Single click event listener with a more specific handler
     const clickHandler = (e: Event) => {
-      console.log('[TOC] Toggle button clicked');
       e.preventDefault();
       e.stopPropagation();
       toggleTOC();
@@ -1011,8 +1182,6 @@ function initializeTOC() {
     tocToggle.addEventListener('click', clickHandler);
     // Mark as initialized
     tocToggle.setAttribute('data-toc-initialized', 'true');
-    
-    console.log('[TOC] Click event listener added successfully');
   } else {
     console.error('[TOC] Toggle button not found!');
   }
@@ -1373,8 +1542,9 @@ function updateTabUI() {
   tabs.forEach((tab, index) => {
     const tabEl = document.createElement('div');
     tabEl.className = 'tab' + (index === activeTabIndex ? ' active' : '');
+    const dirtyMark = tab.isDirty ? '*' : '';
     tabEl.innerHTML = `
-      <span>${tab.title}</span>
+      <span>${tab.title}${dirtyMark}</span>
       <span class="tab-close" data-index="${index}">✕</span>
     `;
     
@@ -1431,6 +1601,13 @@ function updateTabUI() {
 }
 
 function closeTab(index: number) {
+  const closingTab = tabs[index];
+  
+  // Stop watching the file
+  if (closingTab?.filePath) {
+    window.fileWatch.unwatchFile(closingTab.filePath);
+  }
+  
   tabs.splice(index, 1);
   
   if (tabs.length === 0) {
@@ -1454,9 +1631,17 @@ function closeTab(index: number) {
   
   updateTabUI();
   saveSession();
+  refreshEditorFromTab();
 }
 
 function closeAllTabs() {
+  // Stop watching all files
+  tabs.forEach(tab => {
+    if (tab.filePath) {
+      window.fileWatch.unwatchFile(tab.filePath);
+    }
+  });
+  
   tabs.splice(0, tabs.length);
   activeTabIndex = -1;
   const contentDiv = document.getElementById('markdown-content')!;
@@ -1470,6 +1655,7 @@ function closeAllTabs() {
   }
   updateTabUI();
   saveSession(); // This will save an empty session, preventing unwanted restoration
+  refreshEditorFromTab();
 }
 
 function closeOthers(index: number) {
@@ -1502,16 +1688,58 @@ async function openFile() {
         return;
       }
 
+      // Get file modification time
+      const statsResult = await window.fileWatch.getFileStats(filePath);
+      const lastModified = statsResult.success ? statsResult.mtime : Date.now();
+
       tabs.push({
         filePath: filePath,
         content: fileResult.content!,
-        title: filePath.split(/[/\\]/).pop() || 'Untitled'
+        title: filePath.split(/[/\\]/).pop() || 'Untitled',
+        lastModified: lastModified
       });
+
+      // Start watching the file
+      window.fileWatch.watchFile(filePath);
 
       renderTab(tabs.length - 1);
     }
   } catch (error) {
     console.error('Error opening file:', error);
+  }
+}
+
+// Open a specific file path (used by drag-and-drop)
+async function openFilePath(filePath: string) {
+  try {
+    const existingIndex = tabs.findIndex(t => t.filePath === filePath);
+    if (existingIndex >= 0) {
+      renderTab(existingIndex);
+      return;
+    }
+
+    const fileResult = await window.fileSystem.readFile(filePath);
+    if (!fileResult.success) {
+      console.error('Error reading dropped file:', fileResult.error);
+      showStatus('Open failed', 'error');
+      return;
+    }
+
+    const statsResult = await window.fileWatch.getFileStats(filePath);
+    const lastModified = statsResult.success ? statsResult.mtime : Date.now();
+
+    tabs.push({
+      filePath,
+      content: fileResult.content!,
+      title: filePath.split(/[/\\]/).pop() || 'Untitled',
+      lastModified
+    });
+
+    window.fileWatch.watchFile(filePath);
+    renderTab(tabs.length - 1);
+  } catch (error) {
+    console.error('Error opening dropped file:', error);
+    showStatus('Open error', 'error');
   }
 }
 
@@ -1524,13 +1752,58 @@ function saveSession() {
   });
 }
 
+async function saveActiveTab() {
+  if (activeTabIndex < 0) {
+    return;
+  }
+
+  const tab = tabs[activeTabIndex];
+  if (!tab?.filePath) {
+    return;
+  }
+
+  try {
+    const result = await window.fileSystem.writeFile(tab.filePath, tab.content);
+    if (!result.success) {
+      console.error('[SAVE] Failed to write file:', result.error || 'Unknown error');
+      showStatus('Save failed', 'error');
+    } else {
+      tab.isDirty = false;
+      
+      // Update last modified time after save
+      const statsResult = await window.fileWatch.getFileStats(tab.filePath);
+      if (statsResult.success) {
+        tab.lastModified = statsResult.mtime;
+      }
+      
+      updateTabUI();
+      showStatus('Saved', 'success');
+    }
+  } catch (error) {
+    console.error('[SAVE] Unexpected error while saving file:', error);
+    showStatus('Save error', 'error');
+  }
+}
+function showStatus(message: string, type: 'success' | 'error' | 'saving') {
+  const indicator = document.getElementById('status-indicator');
+  if (!indicator) return;
+  indicator.textContent = message;
+  indicator.className = type;
+  if (type !== 'saving') {
+    setTimeout(() => {
+      if (indicator.textContent === message) {
+        indicator.textContent = '';
+        indicator.className = '';
+      }
+    }, 2500);
+  }
+}
+
 async function exportPDF() {
   if (activeTabIndex >= 0) {
     const tab = tabs[activeTabIndex];
     
     // Use the currently active theme
-    console.log('[PDF] Current theme name:', currentThemeName);
-    console.log('[PDF] Current theme data:', themes[currentThemeName]);
     const currentTheme = themes[currentThemeName];
     
     const savePath = await window.printExport.exportPDF(tab.filePath, currentTheme);
@@ -1624,6 +1897,8 @@ async function copyDebugLogs() {
   
   const debugInfo = [
     '=== PrintDown Debug Logs ===',
+   
+   
     `Generated: ${new Date().toISOString()}`,
     `App Version: ${appVersion}`,
     '',
@@ -1637,7 +1912,7 @@ async function copyDebugLogs() {
       : 'No active tab',
     '',
     'MathJax Info:',
-    `Available: ${window.MathJax ? 'Yes' : 'No'}`,
+             `Available: ${window.MathJax ? 'Yes' : 'No'}`,
     `Version: ${window.MathJax?.version || 'N/A'}`,
     '',
     'Mermaid Info:',
@@ -1669,6 +1944,9 @@ window.appVersion().then(version => {
 window.menuEvents.onMenuOpen(openFile);
 window.menuEvents.onMenuExportPDF(exportPDF);
 window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
+window.menuEvents.onMenuSave(async () => {
+  await saveActiveTab();
+});
 
 // Font size menu events
 window.menuEvents.onMenuFontIncrease(() => {
@@ -1717,12 +1995,21 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
         await renderTab(existingIndex);
         updateTabUI();
       } else {
+        // Get file modification time
+        const statsResult = await window.fileWatch.getFileStats(filePath);
+        const lastModified = statsResult.success ? statsResult.mtime : Date.now();
+        
         // Open as new tab
         tabs.push({
           filePath,
           content: fileResult.content,
-          title: filePath.split(/[\\/]/).pop() || 'Untitled'
+          title: filePath.split(/[\\/]/).pop() || 'Untitled',
+          lastModified: lastModified
         });
+        
+        // Start watching the file
+        window.fileWatch.watchFile(filePath);
+        
         await renderTab(tabs.length - 1);
         updateTabUI();
       }
@@ -1735,7 +2022,6 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
 window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
   // Only restore session once and only if no tabs are currently open
   if (sessionRestored || tabs.length > 0) {
-    console.log('[SESSION] Skipping session restoration - already restored or tabs already open');
     return;
   }
   
@@ -1746,27 +2032,22 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     if (session.theme) {
       // Use theme from session
       themeToApply = session.theme as keyof typeof themes;
-      console.log('[SESSION] Restoring theme from session:', themeToApply);
     } else {
       // Check localStorage, then system preference
       const savedTheme = localStorage.getItem('selectedTheme');
       if (savedTheme) {
         themeToApply = savedTheme as keyof typeof themes;
-        console.log('[SESSION] Using theme from localStorage:', themeToApply);
       } else {
         // Detect system theme preference
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         themeToApply = prefersDark ? 'dark' : 'light';
-        console.log('[SESSION] Detected system theme preference:', themeToApply);
       }
     }
   
     if (session.fontSizeFactor !== undefined) {
       fontFactorToApply = session.fontSizeFactor;
-      console.log('[SESSION] Restoring font size factor from session:', fontFactorToApply);
     } else {
       fontFactorToApply = 1.0; // Default
-      console.log('[SESSION] Using default font size factor:', fontFactorToApply);
     }
   
     // Apply theme
@@ -1781,18 +2062,25 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     applyFontSizeFactor(fontSizeFactor);
   
   if (session.openFiles && session.openFiles.length > 0) {
-    console.log('[SESSION] Restoring session with', session.openFiles.length, 'files');
     sessionRestored = true; // Mark as restored to prevent future restorations
     
     for (const filePath of session.openFiles) {
       try {
         const fileResult = await window.fileSystem.readFile(filePath);
         if (fileResult.success) {
+          // Get file modification time
+          const statsResult = await window.fileWatch.getFileStats(filePath);
+          const lastModified = statsResult.success ? statsResult.mtime : Date.now();
+          
           tabs.push({
             filePath,
             content: fileResult.content!,
-            title: filePath.split(/[/\\]/).pop() || 'Untitled'
+            title: filePath.split(/[/\\]/).pop() || 'Untitled',
+            lastModified: lastModified
           });
+          
+          // Start watching the file
+          window.fileWatch.watchFile(filePath);
         }
       } catch (err) {
         console.error('Failed to restore file:', filePath);
@@ -1814,16 +2102,27 @@ const MAX_FACTOR = 2.0;   // Maximum 200% of base size
 const STEP = 0.05;        // 5% change per click
 
 function applyFontSizeFactor(factor: number) {
-  const mdContent = document.getElementById('markdown-content');
-  if (!mdContent) return;
-  
-  // Apply the scaling factor directly to font-size
-  const baseFontSize = 16; // Base font size in pixels
-  const scaledSize = baseFontSize * factor;
-  mdContent.style.fontSize = `${scaledSize}px`;
-  
+  fontSizeFactor = factor;
+  updateContentFontSize();
   // Save to localStorage
   localStorage.setItem('fontSizeFactor', factor.toString());
+}
+
+function updateContentFontSize() {
+  const mdContent = document.getElementById('markdown-content');
+  if (!mdContent) return;
+  mdContent.style.fontSize = getScaledFontSize(currentThemeBaseFontSize, fontSizeFactor);
+}
+
+function getScaledFontSize(baseSize: string, factor: number): string {
+  const match = baseSize.trim().match(/^([\d.]+)([a-z%]+)$/i);
+  if (!match) {
+    const fallback = 16 * factor;
+    return `${fallback}px`;
+  }
+  const value = parseFloat(match[1]) || 16;
+  const unit = match[2];
+  return `${value * factor}${unit}`;
 }
 
 // Initialize font size with saved value
@@ -2150,135 +2449,274 @@ document.addEventListener('DOMContentLoaded', () => {
     tabsContainer.scrollBy({ left: 200, behavior: 'smooth' });
   });
   
-  const dropZone = document.body;
+  editToggleButton = document.getElementById('edit-toggle') as HTMLButtonElement | null;
+  refreshButton = document.getElementById('refresh-toggle') as HTMLButtonElement | null;
+  
+  initializeEditor();
+  
+  editToggleButton?.addEventListener('click', () => {
+    setEditMode(!isEditMode);
+  });
+  
+  refreshButton?.addEventListener('click', () => {
+    refreshActiveFile();
+  });
+  
+  // Listen for external file changes
+  window.fileWatch.onFileChanged((filePath) => {
+    handleFileChanged(filePath);
+  });
 
-  // Prevent default drag behaviors on the entire document
-  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    document.addEventListener(eventName, (e) => {
+  // Drag-and-drop handlers for opening markdown files
+  const dropTarget = document.body;
+  if (dropTarget) {
+    const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-    }, false);
-  });
-
-  // Track drag depth to handle nested elements
-  let dragDepth = 0;
-
-  // Visual feedback when dragging over the window
-  dropZone.addEventListener('dragenter', (e) => {
-    dragDepth++;
-    dropZone.classList.add('drag-over');
-  });
-
-  dropZone.addEventListener('dragleave', (e) => {
-    dragDepth--;
-    if (dragDepth === 0) {
-      dropZone.classList.remove('drag-over');
-    }
-  });
-
-  dropZone.addEventListener('drop', async (e) => {
-    // Reset drag state
-    dragDepth = 0;
-    dropZone.classList.remove('drag-over');
-
-    // Get dropped files
-    const files = Array.from(e.dataTransfer?.files || []);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
     
-    // Filter for Markdown files
-    const markdownFiles = files.filter(file => 
-      file.name.endsWith('.md') || file.name.endsWith('.markdown')
-    );
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
 
-    // Mark session as restored to prevent interference with drag and drop
-    if (!sessionRestored) {
-      sessionRestored = true;
-    }
+    dropTarget.addEventListener('dragenter', handleDragEnter);
+    dropTarget.addEventListener('dragover', handleDragOver);
 
-    // Open each Markdown file
-    for (const file of markdownFiles) {
-      try {
-        // Use webUtils.getPathForFile instead of deprecated file.path
-        const filePath = window.webUtils.getPathForFile(file);
-        
-        if (filePath) {
-          const fileResult = await window.fileSystem.readFile(filePath);
-          if (fileResult.success && fileResult.content) {
-            // Check if file is already open
-            const existingIndex = tabs.findIndex(tab => tab.filePath === filePath);
-            if (existingIndex !== -1) {
-              // Switch to existing tab (only for the last file)
-              if (file === markdownFiles[markdownFiles.length - 1]) {
-                await renderTab(existingIndex);
-                updateTabUI();
-              }
-            } else {
-              // Open as new tab
-              tabs.push({
-                filePath,
-                content: fileResult.content,
-                title: filePath.split(/[\\/]/).pop() || 'Untitled'
-              });
-              // Only render the last tab to avoid multiple renders
-              if (file === markdownFiles[markdownFiles.length - 1]) {
-                await renderTab(tabs.length - 1);
-                updateTabUI();
-              }
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.dataTransfer) {
+        return;
+      }
+      
+      const candidates: string[] = [];
+      
+      // Priority 1: Try File.path from Electron files
+      const files = Array.from(e.dataTransfer.files);
+      
+      if (files.length > 0) {
+        for (const file of files) {
+          let resolvedPath = (file as any).path as string | undefined;
+          
+          // Fall back to Electron's webUtils helper when sandbox strips file.path
+          if (!resolvedPath && window.webUtils?.getPathForFile) {
+            try {
+              resolvedPath = window.webUtils.getPathForFile(file);
+            } catch (err) {
+              // Fallback to other methods
             }
           }
+
+          if (resolvedPath && !candidates.includes(resolvedPath)) {
+            candidates.push(resolvedPath);
+          }
         }
-      } catch (error) {
-        console.error('Error opening dropped file:', error);
+      }
+      
+      // Priority 2: Parse file:// URIs from text/uri-list
+      const uriList = e.dataTransfer.getData('text/uri-list');
+      if (uriList) {
+        uriList.split(/\r?\n/).forEach(line => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          if (/^file:\/\//i.test(trimmed)) {
+            try {
+              const u = new URL(trimmed);
+              let fp = decodeURIComponent(u.pathname);
+              if (/^\/[A-Za-z]:/.test(fp)) fp = fp.slice(1);
+              candidates.push(fp);
+            } catch (err) {
+              // Failed to parse URI
+            }
+          }
+          else if (/^[A-Za-z]:[\\/]/.test(trimmed)) {
+            candidates.push(trimmed);
+          }
+        });
+      }
+      
+      // Priority 3: Parse Windows paths from text/plain
+      const plain = e.dataTransfer.getData('text/plain');
+      if (plain) {
+        plain.split(/\r?\n/).forEach(item => {
+          const s = item.trim();
+          if (!s) return;
+          if (/^[A-Za-z]:[\\/]/.test(s)) {
+            candidates.push(s);
+          }
+        });
+      }
+      
+      // Try candidates in order and open the first that exists
+      for (const path of candidates) {
+        if (!path) continue;
+        try {
+          const stats = await window.fileWatch.getFileStats(path);
+          if (stats.success) {
+            await openFilePath(path);
+            return;
+          }
+        } catch (err) {
+          // Continue to next candidate
+        }
+      }
+      
+      // If we have files but couldn't get their paths, offer file picker
+      if (files.length > 0 && candidates.length === 0) {
+        showStatus('Please select the file you dropped', 'success');
+        const picked = await window.filePicker.pickFile();
+        if (picked && picked.length > 0) {
+          await openFilePath(picked[0]);
+          return;
+        }
+      }
+      
+      console.error('[DROP] No valid file path could be resolved from drop. Candidates tried:', candidates);
+      showStatus('Could not open dropped file', 'error');
+    };
+    dropTarget.addEventListener('drop', handleDrop);
+  }
+});
+
+// Refresh active file content
+async function refreshActiveFile() {
+  if (activeTabIndex < 0) {
+    return;
+  }
+
+  const tab = tabs[activeTabIndex];
+  if (!tab?.filePath) {
+    return;
+  }
+
+  try {
+    // Check if file was modified externally
+    const statsResult = await window.fileWatch.getFileStats(tab.filePath);
+    if (!statsResult.success) {
+      console.error('[REFRESH] Cannot read file stats:', statsResult.error);
+      showStatus('Refresh failed', 'error');
+      return;
+    }
+
+    // If file has local changes, ask user
+    if (tab.isDirty) {
+      const choice = confirm(
+        `The file "${tab.title}" has unsaved changes.\n\n` +
+        'Click OK to discard your changes and reload the file.\n' +
+        'Click Cancel to keep your changes.'
+      );
+      
+      if (!choice) {
+        return; // User wants to keep their changes
       }
     }
 
-    // Render all tabs if multiple were added
-    if (markdownFiles.length > 1) {
-      updateTabUI();
+    // Reload file
+    const fileResult = await window.fileSystem.readFile(tab.filePath);
+    if (!fileResult.success) {
+      console.error('[REFRESH] Error reading file:', fileResult.error);
+      showStatus('Refresh failed', 'error');
+      return;
     }
 
-    // Show message if non-Markdown files were dropped
-    if (markdownFiles.length === 0 && files.length > 0) {
-      console.warn('Only .md and .markdown files are supported');
-      // You could show a user-friendly notification here
+    // Update tab content
+    tab.content = fileResult.content!;
+    tab.isDirty = false;
+    tab.lastModified = statsResult.mtime;
 
-// Initialize theme and font size after a short delay to allow session restore to complete
-setTimeout(() => {
-  if (!sessionRestored) {
-    console.log('[INIT] No session restored, initializing with defaults');
-    
-    // Get theme from localStorage or detect system preference
-    const savedTheme = localStorage.getItem('selectedTheme');
-    let themeToApply: keyof typeof themes;
-    
-    if (savedTheme) {
-      themeToApply = savedTheme as keyof typeof themes;
-      console.log('[INIT] Using theme from localStorage:', themeToApply);
-    } else {
-      // Detect system theme preference
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      themeToApply = prefersDark ? 'dark' : 'light';
-      console.log('[INIT] Detected system theme preference:', themeToApply);
-    }
-    
-    // Apply theme
-    currentThemeName = themeToApply;
-    const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
-    const themeConfig = themes[themeToApply];
-    initMermaid(isDarkTheme, themeToApply, themeConfig);
-    applyTheme(themeToApply);
-    
-    // Get font size from localStorage or use default
-    const savedFontFactor = localStorage.getItem('fontSizeFactor');
-    if (savedFontFactor) {
-      fontSizeFactor = parseFloat(savedFontFactor);
-      console.log('[INIT] Using font size factor from localStorage:', fontSizeFactor);
-    } else {
-      fontSizeFactor = 1.0;
-      console.log('[INIT] Using default font size factor:', fontSizeFactor);
-    }
-    applyFontSizeFactor(fontSizeFactor);
+    // Re-render
+    await renderTab(activeTabIndex);
+    showStatus('Refreshed', 'success');
+    focusEditorDeferred();
+    enforceEditable();
+    // Re-assert editable state and classes after full render
+    refreshEditorFromTab();
+  } catch (error) {
+    console.error('[REFRESH] Error refreshing file:', error);
+    showStatus('Refresh error', 'error');
   }
-}, 100);
+}
+
+// Handle external file changes
+async function handleFileChanged(changedFilePath: string) {
+  // Find the tab for this file
+  const tabIndex = tabs.findIndex(t => t.filePath === changedFilePath);
+  if (tabIndex < 0) {
+    return; // File not open
+  }
+
+  const tab = tabs[tabIndex];
+  
+  try {
+    // Get current file stats
+    const statsResult = await window.fileWatch.getFileStats(changedFilePath);
+    if (!statsResult.success) {
+      return;
     }
-  });
-});
+
+    // Check if file actually changed (compare mtime)
+    if (tab.lastModified && statsResult.mtime === tab.lastModified) {
+      return;
+    }
+
+    // If file has no local changes, auto-reload
+    if (!tab.isDirty) {
+      const fileResult = await window.fileSystem.readFile(changedFilePath);
+      if (fileResult.success) {
+        tab.content = fileResult.content!;
+        tab.lastModified = statsResult.mtime;
+        
+        // Re-render if it's the active tab
+        if (tabIndex === activeTabIndex) {
+          await renderTab(tabIndex);
+        }
+        
+        if (tabIndex === activeTabIndex) {
+          showStatus('File reloaded', 'success');
+        }
+      }
+    } else {
+      // File has local changes - show conflict warning
+      const isActive = (tabIndex === activeTabIndex);
+      const choice = confirm(
+        `The file "${tab.title}" was modified externally and you have unsaved changes.\n\n` +
+        'Click OK to discard your changes and reload the file.\n' +
+        'Click Cancel to keep your changes (you can save over the external changes).'
+      );
+      
+      if (choice) {
+        // User chose to reload
+        const fileResult = await window.fileSystem.readFile(changedFilePath);
+        if (fileResult.success) {
+          tab.content = fileResult.content!;
+          tab.isDirty = false;
+          tab.lastModified = statsResult.mtime;
+          
+          if (isActive) {
+            await renderTab(tabIndex);
+          }
+          
+          updateTabUI();
+          if (isActive) {
+            showStatus('File reloaded', 'success');
+          }
+          if (isActive) {
+            focusEditorDeferred();
+            enforceEditable();
+            // Re-assert editable state and classes after full render
+            refreshEditorFromTab();
+          }
+        }
+      } else {
+        // User chose to keep local changes
+        if (isActive) {
+          showStatus('Kept local changes', 'success');
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[FILE-WATCH] Error handling file change:', error);
+  }
+}

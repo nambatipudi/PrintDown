@@ -61,11 +61,12 @@ Render complex diagrams directly in your Markdown:
 - Reset button to return to default
 - Persistent across sessions and respected by PDF export
 
-### Image Size Control (Per‑Image)
-- Resize images individually directly in the viewer
-- Hover an image to see a dashed outline and a bottom‑right handle
-- Drag the handle to resize while preserving aspect ratio
-- Double‑click the image to reset to 100%
+### Image & SVG Support
+- **Multiple image formats**: PNG, JPG, GIF, WebP, and **SVG**
+- **External SVG files**: Reference SVG files using `![alt](image.svg)` syntax
+- **Inline SVG**: Embed SVG code directly in your Markdown (HTML support enabled)
+- **Per-image resizing**: Hover to see handle, drag to resize, double-click to reset
+- **Aspect ratio preservation**: Images maintain proportions when resized
 - Sizes persist per file and are honored by PDF export
 
 ### PDF Export
@@ -196,6 +197,30 @@ Use **View → Theme** from the menu to choose from 16+ beautiful themes.
 - **Completely Offline**: Zero CDN dependencies - works without internet connection
 - **Modern Architecture**: Electron 39 with latest security features and performance improvements
 - **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead
+
+## SVG Support
+
+PrintDown fully supports SVG (Scalable Vector Graphics) in two ways:
+
+### 1. External SVG Files
+Reference SVG files using standard Markdown image syntax:
+```markdown
+![My Icon](./images/icon.svg)
+```
+
+### 2. Inline SVG (Raw HTML)
+Embed SVG code directly in your Markdown:
+```markdown
+<svg width="100" height="100">
+  <circle cx="50" cy="50" r="40" fill="#4CAF50" />
+</svg>
+```
+
+See `Test_Files/SVG_Support_Test.md` for comprehensive examples including:
+- External SVG file loading
+- Inline SVG with gradients
+- Animated SVG
+- Data URI SVG
 
 ## Markdown Examples
 
