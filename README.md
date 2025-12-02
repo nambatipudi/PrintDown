@@ -28,12 +28,26 @@ Feature-rich Markdown viewer and PDF exporter built with Electron.
 - **Collapsible TOC Sidebar** - Click the ☰ hamburger button to toggle
 - **Smart heading navigation** - Click any heading in TOC to scroll smoothly
 - **Active section highlighting** - Current section highlighted in TOC
+- **Tab scrolling** (NEW) - Left/right scroll buttons (‹ ›) for many open tabs
 - **Keyboard shortcuts** - Ctrl/Cmd + \ to toggle TOC
 - **Right-click tab context menu** - Close, Close Others, Close All options
-- **Enhanced drag & drop** - Visual feedback and multi-file support
+- **Enhanced drag & drop** - Visual feedback and multi-file support with drop zones
 
 ### Customizable Themes
-Choose from 16+ themes *(see theme dropdown screenshot above)*:
+Choose from **22 beautiful themes** including 6 print-optimized options:
+
+**General Use Themes (16)**:
+- `dark`, `light`, `sepia`, `nord`, `dracula`, `solarized-light`
+- `github`, `monokai`, `literary`, `terminal`, `oceanic`, `newspaper`
+- `cyberpunk`, `forest`, `minimal`, `academic`
+
+**Print-Optimized Themes (6)** - Professional layouts for PDF export:
+- `print-classic` - Traditional serif with warm tones
+- `print-modern` - Clean sans-serif with blue accents
+- `print-elegant` - Refined purple palette with Palatino
+- `print-technical` - Technical documentation with green accents
+- `print-report` - Professional reports with gold highlights
+- `print-minimalist` - Minimalist red accents
 
 ### Math Equations
 Full support for mathematical notation using **MathJax 3** *(see first screenshot above)*:
@@ -44,7 +58,7 @@ Full support for mathematical notation using **MathJax 3** *(see first screensho
 - Automatic rendering in both light and dark themes
 
 ### Diagrams
-Render complex diagrams directly in your Markdown:
+Render complex diagrams directly in your Markdown with full customization:
 
 **Mermaid Diagrams** *(see screenshots above)*:
 - **Flowcharts** - Decision trees and process flows
@@ -54,6 +68,14 @@ Render complex diagrams directly in your Markdown:
 - **Gantt charts** - Project timelines and schedules
 - **Git graphs** - Repository branch visualization
 - **Pie charts** - Data visualization
+
+**Diagram Customization** (NEW in v1.7.0):
+- **Resizable** - Drag the resize handle at bottom-right corner
+- **Repositionable** - Drag the top handle (⋮⋮) to align left/center/right
+- **Theme-Aware** - Diagrams automatically match all 22 PrintDown themes
+- **Persistent Settings** - Size and position saved per diagram
+- **Double-click to Reset** - Quickly restore original size and position
+- **PDF-Ready** - Handles hidden in PDF exports for clean output
 
 ### Font Size Control
 - Adjustable font size with +/- buttons
@@ -66,8 +88,9 @@ Render complex diagrams directly in your Markdown:
 - **External SVG files**: Reference SVG files using `![alt](image.svg)` syntax
 - **Inline SVG**: Embed SVG code directly in your Markdown (HTML support enabled)
 - **Per-image resizing**: Hover to see handle, drag to resize, double-click to reset
+- **Repositionable images** (NEW): Drag the top handle (⋮⋮) to align left/center/right
 - **Aspect ratio preservation**: Images maintain proportions when resized
-- Sizes persist per file and are honored by PDF export
+- **Persistent settings**: Sizes and positions persist per file and are honored by PDF export
 
 ### PDF Export
 Export your Markdown to PDFs:
@@ -77,29 +100,48 @@ Export your Markdown to PDFs:
 - **Local vendor scripts** - MathJax, Mermaid, and all libraries bundled locally
 - **System fonts** - Uses high-quality system fonts (no Google Fonts dependency)
 - **Electron 39** - Latest Electron with modern security and performance
+- **File watching** - Automatically detects external changes to open files
+- **Zero vulnerabilities** - All dependencies updated and security issues resolved
 
 ### Session Management
 - Automatically saves open files
 - Restores tabs on app restart
 - Remembers theme and font size preferences
 - **TOC state persistence** - Remembers if sidebar was open/closed
+- **File watching** - Detects external changes to open files and prompts to reload
+- **Visual customization persistence** - Saves image/diagram sizes and positions per file
 
-## What's New in v1.3.0 🎉
+## What's New in v1.7.1 🎉
 
-### Major Features Added:
+### Latest Updates (v1.7.0 - v1.7.1):
+- **📐 Resizable & Repositionable Diagrams** - Resize and reposition Mermaid diagrams just like images
+- **🎨 Enhanced Mermaid Theming** - Diagrams now match all 22 PrintDown theme colors automatically
+- **🗂️ Tab Scrolling** - Navigate many open tabs with left/right scroll buttons (‹ ›)
+- **🔧 Drag-Drop Improvements** - Enhanced visual feedback and better multi-file support
+- **🧹 Performance Optimizations** - Cleaned up debug logging for faster rendering
+
+### Recent Additions (v1.4.0 - v1.6.0):
+- **🖨️ Print-Friendly Themes** - 6 new themes optimized for PDF export: `print-classic`, `print-modern`, `print-elegant`, `print-technical`, `print-report`, `print-minimalist`
+- **📄 Enhanced PDF Export** - Fixed truncation issues, hidden TOC from PDFs, improved generation performance
+- **➕ Improved Math Rendering** - Better support for inline math with spaces (e.g., `$ (a + b) $`)
+- **📚 Markdown-it Migration** - Switched from marked.js to markdown-it with texmath plugin for better math rendering
+- **⬆️ Latest Dependencies** - Electron 39, Mermaid 11.12.1, Webpack 5.102.1, all security vulnerabilities fixed
+- **🔒 Security Enhancements** - Added CSP headers and improved error handling
+
+### Foundation (v1.3.0):
 - **🧭 Table of Contents Sidebar** - Navigate long documents with collapsible heading tree
 - **⚡ Completely Offline** - Removed all CDN dependencies for true offline functionality
 - **🔧 Enhanced UI** - Moved font/theme controls to main menu for cleaner interface
-- **📝 Better Math Support** - Improved parenthetical math expressions like `(a + b)` 
 - **🖱️ Tab Context Menu** - Right-click tabs for Close, Close Others, Close All options
-- **⬆️ Electron 39** - Latest Electron with modern security and performance
+- **📝 Per-Image Resizing** - Resize individual images with drag handles and aspect ratio preservation
 
 ### Technical Improvements:
 - Local vendor scripts (MathJax, Mermaid, Raphael, Underscore)
 - System font stacks instead of Google Fonts
-- Enhanced session restoration
-- Improved drag & drop handling
+- Enhanced session restoration with file watching
+- Improved drag & drop handling with visual feedback
 - Better error handling and debugging
+- VS Code debug configurations included
 
 ## Installation
 
@@ -147,11 +189,12 @@ PrintDown offers multiple convenient ways to open Markdown files:
 - Click **⟲** button to reset to default
 - Click **+** button to increase
 
-### Resizing Images (per‑image)
-- Hover any image to reveal a resize handle at the bottom‑right
-- Drag the handle to resize (aspect ratio preserved)
-- Double‑click the image to reset to 100%
-- Your choice is remembered per file and used during PDF export
+### Resizing & Positioning Images and Diagrams
+- **Resize**: Hover to reveal resize handle at bottom-right corner, drag to resize (aspect ratio preserved)
+- **Reposition**: Hover to reveal drag handle (⋮⋮) at top, drag to align left/center/right
+- **Reset**: Double-click to restore original size and position
+- **Persistent**: Your choices are remembered per file and used during PDF export
+- **Works for**: Both images (PNG, JPG, SVG, etc.) and Mermaid diagrams
 
 ### Using Table of Contents (NEW!)
 - Click the **☰ hamburger button** (top-left) to open/close TOC sidebar
@@ -189,13 +232,13 @@ Use **View → Theme** from the menu to choose from 16+ beautiful themes.
 ## Why PrintDown (vs. VS Code Preview)
 
 - **Professional Navigation**: Built-in Table of Contents sidebar with smooth scrolling and active section highlighting
-- **Better Math Rendering**: Enhanced MathJax pipeline with improved parenthetical expression support and consistent spacing
-- **Per‑Image Resizing**: Resize individual images visually and keep aspect ratio. Settings persist and apply to PDF output
-- **Diagrams**: Built‑in Mermaid and UML sequence support with theme awareness; no extensions required
-- **Print & Export**: First‑class PDF export (and print) that respects theme, font size, and image sizes with page‑friendly styles
-- **Tabs & Management**: Multi‑tab viewer with right‑click context menu (Close, Close Others, Close All)
+- **Better Math Rendering**: Enhanced MathJax pipeline with markdown-it-texmath for improved parenthetical expressions and consistent spacing
+- **Visual Customization**: Resize AND reposition images and Mermaid diagrams with drag handles. Settings persist and apply to PDF output
+- **Enhanced Diagrams**: Built-in Mermaid support with automatic theme matching across 22 themes; no extensions required
+- **Print & Export**: First-class PDF export with 6 print-optimized themes, respecting all visual customizations and font sizes
+- **Tabs & Management**: Multi-tab viewer with scrolling navigation and right-click context menu (Close, Close Others, Close All)
 - **Completely Offline**: Zero CDN dependencies - works without internet connection
-- **Modern Architecture**: Electron 39 with latest security features and performance improvements
+- **Modern Architecture**: Electron 39 with latest security features, zero vulnerabilities, and file watching
 - **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead
 
 ## SVG Support
@@ -266,7 +309,8 @@ This project is open source and available under the [MIT License](LICENSE).
 
 - MathJax for mathematical typesetting
 - Mermaid for diagram rendering
-- Marked.js for Markdown parsing
+- markdown-it and markdown-it-texmath for Markdown parsing with math support
+- CodeMirror for inline Markdown editing
 - Electron community for the amazing framework
 
 ---
