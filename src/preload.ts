@@ -104,6 +104,12 @@ contextBridge.exposeInMainWorld('themeAPI', {
   }
 });
 
+// Expose protocol allowlist APIs
+contextBridge.exposeInMainWorld('protocolDirs', {
+  allow: (dirPath: string) => ipcRenderer.invoke('allow-protocol-dir', dirPath),
+  disallow: (dirPath: string) => ipcRenderer.invoke('disallow-protocol-dir', dirPath),
+});
+
 // Expose file watching APIs
 contextBridge.exposeInMainWorld('fileWatch', {
   watchFile: async (filePath: string) => {

@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import texmath from 'markdown-it-texmath';
+import DOMPurify from 'dompurify';
 // CodeMirror imports
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -44,6 +45,10 @@ declare global {
       };
     clipboard: {
       writeText: (text: string) => void;
+    };
+    protocolDirs: {
+      allow: (dirPath: string) => Promise<void>;
+      disallow: (dirPath: string) => Promise<void>;
     };
     fileWatch: {
       watchFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -948,8 +953,20 @@ async function renderTab(index: number, options: RenderOptions = {}) {
     }
   }
   
-  // Set the HTML
-  contentDiv.innerHTML = html;
+  // Set the HTML — sanitize to prevent XSS from malicious markdown files.
+  // ADD_TAGS/ADD_ATTR allow MathJax (mjx-*) and Mermaid (svg, foreignObject) to survive.
+  contentDiv.innerHTML = DOMPurify.sanitize(html, {
+    ADD_TAGS: ['mjx-container', 'mjx-math', 'mjx-mrow', 'mjx-mo', 'mjx-mi', 'mjx-mn',
+               'mjx-msup', 'mjx-msub', 'mjx-msubsup', 'mjx-mfrac', 'mjx-sqrt',
+               'mjx-mtext', 'mjx-mspace', 'mjx-merror', 'mjx-semantics',
+               'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
+               'mfrac', 'msqrt', 'mtext', 'mspace', 'semantics', 'annotation',
+               'foreignObject'],
+    ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
+               'xmlns', 'viewBox', 'preserveAspectRatio', 'focusable',
+               'aria-hidden', 'role', 'tabindex'],
+    FORCE_BODY: false,
+  });
   // Enhance images with per-image resizing controls before further processing
   setupResizableImages(contentDiv);
   
@@ -1600,15 +1617,33 @@ function updateTabUI() {
   }
 }
 
+function fileDir(filePath: string): string {
+  const i = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return i > 0 ? filePath.substring(0, i) : filePath;
+}
+
+function maybeDisallowProtocolDir(closedFilePath: string): void {
+  const dir = fileDir(closedFilePath);
+  const stillInUse = tabs.some(t => t.filePath && fileDir(t.filePath) === dir);
+  if (!stillInUse) {
+    window.protocolDirs.disallow(dir);
+  }
+}
+
 function closeTab(index: number) {
   const closingTab = tabs[index];
-  
+
   // Stop watching the file
   if (closingTab?.filePath) {
     window.fileWatch.unwatchFile(closingTab.filePath);
   }
-  
+
   tabs.splice(index, 1);
+
+  // Revoke protocol access if no remaining tab uses the same directory
+  if (closingTab?.filePath) {
+    maybeDisallowProtocolDir(closingTab.filePath);
+  }
   
   if (tabs.length === 0) {
     activeTabIndex = -1;
@@ -1635,13 +1670,15 @@ function closeTab(index: number) {
 }
 
 function closeAllTabs() {
-  // Stop watching all files
+  // Stop watching all files and revoke protocol access for all dirs
+  const dirsToDisallow = new Set(tabs.filter(t => t.filePath).map(t => fileDir(t.filePath)));
   tabs.forEach(tab => {
     if (tab.filePath) {
       window.fileWatch.unwatchFile(tab.filePath);
     }
   });
-  
+  dirsToDisallow.forEach(dir => window.protocolDirs.disallow(dir));
+
   tabs.splice(0, tabs.length);
   activeTabIndex = -1;
   const contentDiv = document.getElementById('markdown-content')!;
@@ -1699,8 +1736,9 @@ async function openFile() {
         lastModified: lastModified
       });
 
-      // Start watching the file
+      // Start watching the file and allow its directory via the protocol handler
       window.fileWatch.watchFile(filePath);
+      window.protocolDirs.allow(fileDir(filePath));
 
       renderTab(tabs.length - 1);
     }
@@ -1736,6 +1774,7 @@ async function openFilePath(filePath: string) {
     });
 
     window.fileWatch.watchFile(filePath);
+    window.protocolDirs.allow(fileDir(filePath));
     renderTab(tabs.length - 1);
   } catch (error) {
     console.error('Error opening dropped file:', error);
@@ -1822,6 +1861,7 @@ interface LogEntry {
   message: string;
   tabIndex: number | null;
 }
+const MAX_LOG_ENTRIES = 1000;
 const consoleLogs: LogEntry[] = [];
 const originalConsole = {
   log: console.log,
@@ -1835,50 +1875,19 @@ function getCurrentTabIndex(): number | null {
   return activeTabIndex >= 0 ? activeTabIndex : null;
 }
 
+function pushLog(level: string, args: any[]): void {
+  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  if (consoleLogs.length >= MAX_LOG_ENTRIES) {
+    consoleLogs.splice(0, Math.floor(MAX_LOG_ENTRIES / 4)); // drop oldest 25%
+  }
+  consoleLogs.push({ timestamp: new Date().toISOString(), level, message, tabIndex: getCurrentTabIndex() });
+}
+
 // Override console methods to capture logs with tab information
-console.log = (...args: any[]) => {
-  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  consoleLogs.push({
-    timestamp: new Date().toISOString(),
-    level: 'LOG',
-    message,
-    tabIndex: getCurrentTabIndex()
-  });
-  originalConsole.log(...args);
-};
-
-console.warn = (...args: any[]) => {
-  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  consoleLogs.push({
-    timestamp: new Date().toISOString(),
-    level: 'WARN',
-    message,
-    tabIndex: getCurrentTabIndex()
-  });
-  originalConsole.warn(...args);
-};
-
-console.error = (...args: any[]) => {
-  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  consoleLogs.push({
-    timestamp: new Date().toISOString(),
-    level: 'ERROR',
-    message,
-    tabIndex: getCurrentTabIndex()
-  });
-  originalConsole.error(...args);
-};
-
-console.info = (...args: any[]) => {
-  const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  consoleLogs.push({
-    timestamp: new Date().toISOString(),
-    level: 'INFO',
-    message,
-    tabIndex: getCurrentTabIndex()
-  });
-  originalConsole.info(...args);
-};
+console.log   = (...args: any[]) => { pushLog('LOG',   args); originalConsole.log(...args);   };
+console.warn  = (...args: any[]) => { pushLog('WARN',  args); originalConsole.warn(...args);  };
+console.error = (...args: any[]) => { pushLog('ERROR', args); originalConsole.error(...args); };
+console.info  = (...args: any[]) => { pushLog('INFO',  args); originalConsole.info(...args);  };
 
 async function copyDebugLogs() {
   // Get app version
@@ -2007,9 +2016,10 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
           lastModified: lastModified
         });
         
-        // Start watching the file
+        // Start watching the file and allow its directory via the protocol handler
         window.fileWatch.watchFile(filePath);
-        
+        window.protocolDirs.allow(fileDir(filePath));
+
         await renderTab(tabs.length - 1);
         updateTabUI();
       }
@@ -2079,8 +2089,9 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
             lastModified: lastModified
           });
           
-          // Start watching the file
+          // Start watching the file and allow its directory via the protocol handler
           window.fileWatch.watchFile(filePath);
+          window.protocolDirs.allow(fileDir(filePath));
         }
       } catch (err) {
         console.error('Failed to restore file:', filePath);
@@ -2156,45 +2167,54 @@ applyImageScaleFactor(imageScaleFactor);
 const style = document.createElement('style');
 style.textContent = `
   @media print {
+    /*
+     * Single authoritative @page rule.
+     * Margins are set here so Chromium uses them when paginating content
+     * (calculating where page breaks fall). printToPDF() margins are set to
+     * zero to avoid double-counting. If CSS @page margin: 0 were used,
+     * Chromium would paginate as if the full page height is available, then
+     * printToPDF would add physical whitespace — causing content to overflow
+     * into the margin area on pages 2+.
+     */
     @page {
       size: A4;
-      margin: 0;  /* Let Electron handle margins */
+      margin: 0.5in 0.75in;
     }
-    
+
+    /* Preserve background colours & images (themes, code blocks, etc.) */
     * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
     }
-    
-    html, body { 
+
+    html, body {
       height: auto !important;
       overflow: visible !important;
       margin: 0 !important;
       padding: 0 !important;
       display: block !important;
     }
-    
+
     .main-container {
       height: auto !important;
       overflow: visible !important;
       display: block !important;
     }
-    
-    .header { display: none !important; }
-    .tabs { display: none !important; }
-    .font-size-controls { display: none !important; }
-    .theme-selector { display: none !important; }
-    .empty-state { display: none !important; }
-    .toc-sidebar { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
-    .toc-sidebar.open { display: none !important; width: 0 !important; min-width: 0 !important; visibility: hidden !important; }
-    
-    /* Hide interactive handles in print/PDF */
-    .resize-handle { display: none !important; }
-    .drag-handle { display: none !important; }
-    .resizable-image:hover { outline: none !important; }
-    .resizable-mermaid:hover { outline: none !important; }
-    
+
+    /* Hide chrome UI */
+    .header, .tabs, .font-size-controls, .theme-selector,
+    .empty-state, .toc-sidebar, .toc-sidebar.open {
+      display: none !important;
+      width: 0 !important;
+      min-width: 0 !important;
+      visibility: hidden !important;
+    }
+
+    /* Hide interactive resize/drag handles */
+    .resize-handle, .drag-handle { display: none !important; }
+    .resizable-image:hover, .resizable-mermaid:hover { outline: none !important; }
+
     #content {
       padding: 0 !important;
       margin: 0 !important;
@@ -2202,8 +2222,8 @@ style.textContent = `
       overflow: visible !important;
       max-height: none !important;
     }
-    
-    #markdown-content { 
+
+    #markdown-content {
       max-width: none !important;
       width: 100% !important;
       margin: 0 !important;
@@ -2211,86 +2231,115 @@ style.textContent = `
       height: auto !important;
       overflow: visible !important;
     }
-    
-    /* Ensure MathJax renders properly in print/PDF */
-    mjx-container { 
-      page-break-inside: avoid;
-      overflow: visible !important;
-    }
-    
-    /* Better typography and page breaks for PDF */
-    h1 {
-      page-break-before: auto;
-      page-break-after: avoid;
-      break-before: auto;
+
+    /* ── Page-break rules ─────────────────────────────────────────────── */
+
+    /* Never orphan a heading: keep at least the next element on the same page */
+    h1, h2, h3, h4, h5, h6 {
       break-after: avoid;
-    }
-    
-    h2, h3, h4, h5, h6 {
       page-break-after: avoid;
-      break-after: avoid;
-      page-break-inside: avoid;
       break-inside: avoid;
+      page-break-inside: avoid;
     }
-    
+
+    /* Let paragraphs break naturally — forcing avoid causes large whitespace
+       gaps when a paragraph is pushed to the next page. Use orphans/widows
+       instead to avoid ugly 1-line splits. */
     p {
-      page-break-inside: avoid;
-      break-inside: avoid;
       orphans: 3;
       widows: 3;
     }
-    
+
     li {
-      page-break-inside: avoid;
-      break-inside: avoid;
-      orphans: 3;
-      widows: 3;
+      orphans: 2;
+      widows: 2;
     }
-    
-    ul, ol {
-      page-break-inside: auto;
+
+    /* Keep code blocks, blockquotes, and small tables together */
+    pre, blockquote {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    /* Tables: allow page breaks between rows, but not inside a row.
+       thead repeats on every page so readers always have column headers. */
+    table {
       break-inside: auto;
+      page-break-inside: auto;
+      width: 100% !important;
+      max-width: 100% !important;
+      table-layout: fixed !important;
+      box-sizing: border-box !important;
     }
-    
-    pre, code, blockquote, table {
-      page-break-inside: avoid;
+
+    thead {
+      display: table-header-group; /* repeat header on every page */
+    }
+
+    tr {
       break-inside: avoid;
+      page-break-inside: avoid;
     }
-    
+
+    td, th {
+      word-wrap: break-word !important;
+      overflow-wrap: break-word !important;
+      overflow: visible !important;
+      box-sizing: border-box !important;
+    }
+
+    /* Images: scale to fit the printable width, never split across pages */
     img {
       max-width: 100% !important;
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    
-    /* Mermaid diagrams in print/PDF */
-    .mermaid-diagram {
-      page-break-inside: avoid;
-      break-inside: avoid;
-      text-align: center;
-      max-height: none !important;
-      overflow: visible !important;
-    }
-    
-    .mermaid-diagram svg {
-      max-width: 100% !important;
       height: auto !important;
-      width: auto !important;
-    }
-    
-    /* UML sequence diagrams in print/PDF */
-    .uml-sequence-diagram {
-      page-break-inside: avoid;
       break-inside: avoid;
-      text-align: center;
-      max-height: none !important;
+      page-break-inside: avoid;
+    }
+
+    /* MathJax: keep equations together */
+    mjx-container {
+      break-inside: avoid;
+      page-break-inside: avoid;
       overflow: visible !important;
     }
-    
+
+    /* Mermaid / UML diagrams ─────────────────────────────────────────── */
+    /* Cap height so a tall diagram cannot overflow a full A4 page.
+       A4 printable height (minus printToPDF margins 0.5+0.5in) ≈ 247mm.
+       Using 220mm leaves a little breathing room. */
+    .mermaid-diagram,
+    .uml-sequence-diagram {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      text-align: center;
+      overflow: visible !important;
+      max-height: 220mm;
+    }
+
+    .mermaid-diagram svg,
     .uml-sequence-diagram svg {
       max-width: 100% !important;
-      height: auto !important;
+      max-height: 220mm !important;
       width: auto !important;
+      height: auto !important;
+      display: block !important;
+      margin: 0 auto !important;
+    }
+
+    /* Code blocks: wrap long lines, never overflow the page width */
+    pre {
+      white-space: pre-wrap !important;
+      word-wrap: break-word !important;
+      overflow-wrap: break-word !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+      box-sizing: border-box !important;
+    }
+
+    code {
+      white-space: pre-wrap !important;
+      word-wrap: break-word !important;
+      overflow-wrap: break-word !important;
     }
   }
 `;
@@ -2650,9 +2699,12 @@ async function handleFileChanged(changedFilePath: string) {
   const tab = tabs[tabIndex];
   
   try {
-    // Get current file stats
+    // Get current file stats — failure most likely means the file was deleted
     const statsResult = await window.fileWatch.getFileStats(changedFilePath);
     if (!statsResult.success) {
+      if (tabIndex === activeTabIndex) {
+        showStatus(`"${tab.title}" was deleted or moved`, 'error');
+      }
       return;
     }
 

@@ -10,6 +10,9 @@ interface SessionData {
   fontSizeFactor?: number;
 }
 
+// Set app name before anything else so macOS menu bar shows "Print Down"
+app.name = 'Print Down';
+
 const store = new Store<{ session: SessionData }>();
 
 let mainWindow: BrowserWindow | null = null;
@@ -22,8 +25,9 @@ const fileWatchers = new Map<string, fs.FSWatcher>();
 // Track file stats to detect actual changes
 const fileStats = new Map<string, { mtime: Date; size: number }>();
 
-// Toggle to enable/disable verbose protocol logging
-const PROTOCOL_DEBUG = false;
+// Allowed base directories for the printdown:// protocol.
+// Only files within these directories (and their subdirectories) can be served.
+const allowedProtocolDirs = new Set<string>();
 
 // Register custom protocol to serve local files for images
 try {
@@ -71,7 +75,29 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   // Create menu
-  const menu = Menu.buildFromTemplate([
+  const template: Electron.MenuItemConstructorOptions[] = [];
+
+  // macOS: first menu item label is the bold app name shown in the menu bar.
+  // role:'appMenu' uses app.getName() which returns the binary name ("Electron")
+  // when running in dev. Explicit label:'Print Down' fixes this.
+  if (process.platform === 'darwin') {
+    template.push({
+      label: 'Print Down',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    });
+  }
+
+  template.push(
     {
       label: 'File',
       submenu: [
@@ -283,12 +309,12 @@ function createWindow() {
       label: 'Help',
       submenu: [
         {
-          label: 'About PrintDown',
+          label: 'About Print Down',
           click: () => {
             dialog.showMessageBox(mainWindow!, {
               type: 'info',
-              title: 'About PrintDown',
-              message: 'PrintDown',
+              title: 'About Print Down',
+              message: 'Print Down',
               detail: `Version: ${app.getVersion()}\n\nA beautiful Markdown viewer and PDF exporter with:\n• Live preview with themes\n• Math equations (MathJax)\n• Mermaid diagrams\n• UML sequence diagrams\n• Adjustable font size\n• Export to PDF with proper margins\n\nCreated by: Nambatipudi\nGitHub: https://github.com/nambatipudi`,
               buttons: ['OK']
             });
@@ -303,16 +329,31 @@ function createWindow() {
         }
       ]
     }
-  ]);
+  );
+
+  const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 
-  // Restore session
-  const session = store.get('session');
-  if (session?.openFiles?.length > 0) {
+  // Restore session (guard against corrupted store data)
+  let session: SessionData | undefined;
+  try {
+    session = store.get('session');
+    // Basic schema validation
+    if (session && (!Array.isArray(session.openFiles) || typeof session.activeIndex !== 'number')) {
+      console.warn('[SESSION] Corrupted session data, resetting.');
+      store.delete('session');
+      session = undefined;
+    }
+  } catch (err) {
+    console.error('[SESSION] Failed to read session, resetting store:', err);
+    try { store.clear(); } catch (_) { /* ignore */ }
+    session = undefined;
+  }
+  if ((session?.openFiles?.length ?? 0) > 0) {
     mainWindow.webContents.on('did-finish-load', () => {
       mainWindow?.webContents.send('restore-session', session);
     });
@@ -396,7 +437,22 @@ app.whenReady().then(() => {
         // Unix-like systems
         normalizedPath = path.resolve(url);
       }
-      
+
+      // Security: only serve files that live inside a directory of an open markdown file.
+      // This prevents a crafted markdown from using printdown:// to exfiltrate arbitrary files.
+      if (allowedProtocolDirs.size > 0) {
+        const sep = path.sep;
+        const isAllowed = [...allowedProtocolDirs].some(allowedDir => {
+          const base = allowedDir.endsWith(sep) ? allowedDir : allowedDir + sep;
+          return normalizedPath.startsWith(base) || normalizedPath === allowedDir;
+        });
+        if (!isAllowed) {
+          console.error(`[PROTOCOL] Blocked request outside allowed dirs: ${normalizedPath}`);
+          callback({ error: -10 }); // ACCESS_DENIED
+          return;
+        }
+      }
+
       // If file doesn't exist, try alternative path formats
       if (!fs.existsSync(normalizedPath)) {
         
@@ -482,6 +538,19 @@ app.on('activate', () => {
   }
 });
 
+app.on('before-quit', () => {
+  // Close all file watchers to avoid dangling handles
+  for (const [filePath, watcher] of fileWatchers) {
+    try {
+      watcher.close();
+    } catch (err) {
+      console.error(`[WATCHER] Error closing watcher for ${filePath}:`, err);
+    }
+  }
+  fileWatchers.clear();
+  fileStats.clear();
+});
+
 // IPC Handlers
 ipcMain.handle('open-file-dialog', async () => {
   try {
@@ -528,7 +597,11 @@ ipcMain.handle('write-file', async (event, filePath: string, content: string) =>
 });
 
 ipcMain.handle('save-session', (_event, session: SessionData) => {
-  store.set('session', session);
+  try {
+    store.set('session', session);
+  } catch (err) {
+    console.error('[SESSION] Failed to save session:', err);
+  }
 });
 
 ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) => {
@@ -744,32 +817,34 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       })();
     `);
     
-    const pdfData = await mainWindow.webContents.printToPDF({
-      printBackground: true,         
-      landscape: false,
-      pageSize: 'A4',               
-      margins: {                    
-        top: 0.5,
-        bottom: 0.5, 
-        left: 0.75,
-        right: 0.75
-      },
-      preferCSSPageSize: false,     
-      displayHeaderFooter: false,
-      generateDocumentOutline: false,
-      generateTaggedPDF: false,
-      pageRanges: ''                
-    });
-    console.log('[PDF] PDF generation completed, size:', pdfData.length, 'bytes');
-    
-    // Restore original styles
-    await mainWindow.webContents.executeJavaScript(`
-      (function() {
-        if (window._pdfOriginalStyles) {
-          const content = document.getElementById('content');
-          const mainContainer = document.querySelector('.main-container');
-          const tocSidebar = document.getElementById('toc-sidebar');
-          const styles = window._pdfOriginalStyles;
+    let pdfData: Buffer;
+    try {
+      pdfData = await mainWindow.webContents.printToPDF({
+        printBackground: true,
+        landscape: false,
+        pageSize: 'A4',
+        margins: {
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0
+        },
+        preferCSSPageSize: false,
+        displayHeaderFooter: false,
+        generateDocumentOutline: false,
+        generateTaggedPDF: false,
+        pageRanges: ''
+      });
+      console.log('[PDF] PDF generation completed, size:', pdfData.length, 'bytes');
+    } finally {
+      // Always restore DOM styles, even if printToPDF throws
+      await mainWindow.webContents.executeJavaScript(`
+        (function() {
+          if (window._pdfOriginalStyles) {
+            const content = document.getElementById('content');
+            const mainContainer = document.querySelector('.main-container');
+            const tocSidebar = document.getElementById('toc-sidebar');
+            const styles = window._pdfOriginalStyles;
           
           // Restore body styles
           document.body.style.display = styles.bodyDisplay;
@@ -802,15 +877,17 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
           console.log('[PDF] Restored original styles');
         }
       })();
-    `);    // Clean up the injected theme style
-    if (themeData) {
-      await mainWindow.webContents.executeJavaScript(`
-        (function() {
-          const style = document.getElementById('pdf-theme-override');
-          if (style) style.remove();
-        })();
-      `);
-    }
+    `);
+      // Clean up the injected theme style
+      if (themeData) {
+        await mainWindow.webContents.executeJavaScript(`
+          (function() {
+            const style = document.getElementById('pdf-theme-override');
+            if (style) style.remove();
+          })();
+        `);
+      }
+    } // end finally
 
     // Write PDF to file asynchronously with proper error handling
     try {
@@ -1020,4 +1097,14 @@ ipcMain.handle('unwatch-directory', async (_event, dirPath: string) => {
     console.error('Error unwatching directory:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
+});
+
+// IPC handlers to manage allowed directories for the printdown:// protocol.
+// Called when tabs are opened/closed so the protocol only serves files in those dirs.
+ipcMain.handle('allow-protocol-dir', (_event, dirPath: string) => {
+  allowedProtocolDirs.add(dirPath);
+});
+
+ipcMain.handle('disallow-protocol-dir', (_event, dirPath: string) => {
+  allowedProtocolDirs.delete(dirPath);
 });

@@ -30,6 +30,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.18.13",
     "copy-webpack-plugin": "^12.0.0",
@@ -48,6 +49,7 @@
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.19.1",
+    "dompurify": "^3.2.6",
     "@codemirror/commands": "^6.10.0",
     "@codemirror/history": "^0.19.2",
     "@codemirror/lang-markdown": "^6.5.0",
@@ -63,7 +65,7 @@
   },
   "build": {
     "appId": "com.printdown.app",
-    "productName": "PrintDown",
+    "productName": "Print Down",
     "copyright": "Copyright © 2025",
     "publish": {
       "provider": "github",
