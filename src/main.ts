@@ -107,14 +107,18 @@ function createWindow() {
           click: () => mainWindow?.webContents.send('menu-open')
         },
         {
+          id: 'file-save',
           label: 'Save',
           accelerator: 'CmdOrCtrl+S',
+          enabled: false,
           click: () => mainWindow?.webContents.send('menu-save')
         },
         { type: 'separator' },
         {
+          id: 'file-export-pdf',
           label: 'Export to PDF...',
           accelerator: 'CmdOrCtrl+P',
+          enabled: false,
           click: () => mainWindow?.webContents.send('menu-export-pdf')
         },
         { type: 'separator' },
@@ -247,7 +251,6 @@ function createWindow() {
               checked: currentTheme === 'academic',
               click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
             },
-            { type: 'separator' },
             {
               label: 'Print Classic',
               type: 'radio',
@@ -333,6 +336,7 @@ function createWindow() {
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+  setFileActionMenuEnabled(false);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -358,6 +362,30 @@ function createWindow() {
       mainWindow?.webContents.send('restore-session', session);
     });
   }
+}
+
+function setFileActionMenuEnabled(enabled: boolean) {
+  const menu = Menu.getApplicationMenu();
+  if (!menu) return;
+
+  let saveItem = menu.getMenuItemById('file-save');
+  let exportItem = menu.getMenuItemById('file-export-pdf');
+
+  // Fallback lookup by label in case menu item IDs are not preserved on a platform.
+  if (!saveItem || !exportItem) {
+    const fileMenu = menu.items.find(item => item.label === 'File');
+    if (fileMenu?.submenu) {
+      if (!saveItem) {
+        saveItem = fileMenu.submenu.items.find(item => item.label === 'Save') ?? null;
+      }
+      if (!exportItem) {
+        exportItem = fileMenu.submenu.items.find(item => item.label === 'Export to PDF...') ?? null;
+      }
+    }
+  }
+
+  if (saveItem) saveItem.enabled = enabled;
+  if (exportItem) exportItem.enabled = enabled;
 }
 
 // Handle file opening from command line or double-click
@@ -559,7 +587,7 @@ ipcMain.handle('open-file-dialog', async () => {
     
     const result = await dialog.showOpenDialog({
       title: 'Open Markdown File',
-      properties: ['openFile'],
+      properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Markdown', extensions: ['md', 'markdown'] },
         { name: 'All Files', extensions: ['*'] }
@@ -604,7 +632,7 @@ ipcMain.handle('save-session', (_event, session: SessionData) => {
   }
 });
 
-ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) => {
+ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, pageSettings?: { pageSize?: { width: number; height: number }; margins?: { top: number; bottom: number; left: number; right: number }; orientation?: 'portrait' | 'landscape'; pageView?: boolean; }) => {
   if (!mainWindow) return null;
   
   // Show save dialog first
@@ -656,7 +684,10 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       
       const themeCSS = `
         @media print {
-          body {
+          @page {
+            background: ${themeData.body} !important;
+          }
+          html, body {
             background: ${themeData.body} !important;
             color: ${themeData.text} !important;
           }
@@ -764,7 +795,15 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       (function() {
         const content = document.getElementById('content');
         const markdownContent = document.getElementById('markdown-content');
+        if (!content || !markdownContent) {
+          console.warn('[PDF] Missing content containers, skipping layout isolation step');
+          return;
+        }
         const mainContainer = document.querySelector('.main-container');
+        const splitContainer = document.querySelector('.split-container');
+        const editorPane = document.querySelector('.editor-pane');
+        const splitter = document.querySelector('.splitter');
+        const viewerPane = document.querySelector('.viewer-pane');
         const tocSidebar = document.getElementById('toc-sidebar');
         
         // Store original styles
@@ -779,10 +818,65 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
           mainContainerOverflow: mainContainer ? mainContainer.style.overflow : '',
           mainContainerHeight: mainContainer ? mainContainer.style.height : '',
           mainContainerDisplay: mainContainer ? mainContainer.style.display : '',
+          splitContainerDisplay: splitContainer ? splitContainer.style.display : '',
+          splitContainerOverflow: splitContainer ? splitContainer.style.overflow : '',
+          editorPaneDisplay: editorPane ? editorPane.style.display : '',
+          editorPaneFlex: editorPane ? editorPane.style.flex : '',
+          editorPaneWidth: editorPane ? editorPane.style.width : '',
+          splitterDisplay: splitter ? splitter.style.display : '',
+          viewerPaneFlex: viewerPane ? viewerPane.style.flex : '',
+          viewerPaneWidth: viewerPane ? viewerPane.style.width : '',
           tocSidebarDisplay: tocSidebar ? tocSidebar.style.display : '',
           tocSidebarWidth: tocSidebar ? tocSidebar.style.width : '',
           tocSidebarVisibility: tocSidebar ? tocSidebar.style.visibility : ''
         };
+
+        // Hard isolation: print only the rendered markdown node.
+        // We move #markdown-content into a dedicated root and hide all other top-level nodes.
+        const placeholder = document.createComment('pdf-markdown-placeholder');
+        const originalParent = markdownContent.parentNode;
+        if (originalParent) {
+          originalParent.insertBefore(placeholder, markdownContent);
+        }
+
+        const exportRoot = document.createElement('div');
+        exportRoot.id = 'pdf-export-root';
+        exportRoot.style.display = 'block';
+        exportRoot.style.width = '100%';
+        exportRoot.style.height = 'auto';
+        exportRoot.style.overflow = 'visible';
+
+        document.body.appendChild(exportRoot);
+        exportRoot.appendChild(markdownContent);
+
+        const hiddenBodyChildren = [];
+        Array.from(document.body.children).forEach((child) => {
+          if (child === exportRoot) return;
+          hiddenBodyChildren.push({ node: child, display: child.style.display });
+          child.style.display = 'none';
+        });
+
+        window._pdfOriginalStyles.exportRoot = exportRoot;
+        window._pdfOriginalStyles.markdownPlaceholder = placeholder;
+        window._pdfOriginalStyles.hiddenBodyChildren = hiddenBodyChildren;
+
+        // Force viewer-only layout so PDF includes rendered markdown only.
+        if (splitContainer) {
+          splitContainer.style.display = 'block';
+          splitContainer.style.overflow = 'visible';
+        }
+        if (editorPane) {
+          editorPane.style.display = 'none';
+          editorPane.style.flex = '0 0 0';
+          editorPane.style.width = '0';
+        }
+        if (splitter) {
+          splitter.style.display = 'none';
+        }
+        if (viewerPane) {
+          viewerPane.style.flex = '1 1 auto';
+          viewerPane.style.width = '100%';
+        }
         
         // FORCE hide TOC sidebar regardless of its open state
         if (tocSidebar) {
@@ -817,18 +911,28 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
       })();
     `);
     
+    // Page settings (inches) – can be overridden by renderer
+    const pdfPageSize = pageSettings?.pageSize || { width: 8.27, height: 11.69 }; // default A4
+    const pdfMargins = pageSettings?.pageView
+      ? { top: 0, bottom: 0, left: 0, right: 0 } // avoid double margins when page-view already adds padding
+      : (pageSettings?.margins || {
+          top: 0.6,
+          bottom: 0.6,
+          left: 0.5,
+          right: 0.5
+        });
+
     let pdfData: Buffer;
     try {
+      let finalPageSize = { ...pdfPageSize };
+      if (pageSettings?.orientation === 'landscape' && pdfPageSize.height > pdfPageSize.width) {
+        finalPageSize = { width: pdfPageSize.height, height: pdfPageSize.width };
+      }
       pdfData = await mainWindow.webContents.printToPDF({
         printBackground: true,
-        landscape: false,
-        pageSize: 'A4',
-        margins: {
-          top: 0,
-          bottom: 0,
-          left: 0,
-          right: 0
-        },
+        landscape: pageSettings?.orientation === 'landscape',
+        pageSize: finalPageSize,
+        margins: pdfMargins,
         preferCSSPageSize: false,
         displayHeaderFooter: false,
         generateDocumentOutline: false,
@@ -842,9 +946,31 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
         (function() {
           if (window._pdfOriginalStyles) {
             const content = document.getElementById('content');
+            const markdownContent = document.getElementById('markdown-content');
             const mainContainer = document.querySelector('.main-container');
+            const splitContainer = document.querySelector('.split-container');
+            const editorPane = document.querySelector('.editor-pane');
+            const splitter = document.querySelector('.splitter');
+            const viewerPane = document.querySelector('.viewer-pane');
             const tocSidebar = document.getElementById('toc-sidebar');
             const styles = window._pdfOriginalStyles;
+
+            if (styles.hiddenBodyChildren && Array.isArray(styles.hiddenBodyChildren)) {
+              styles.hiddenBodyChildren.forEach((entry) => {
+                if (entry && entry.node) {
+                  entry.node.style.display = entry.display;
+                }
+              });
+            }
+
+            if (styles.markdownPlaceholder && markdownContent && styles.markdownPlaceholder.parentNode) {
+              styles.markdownPlaceholder.parentNode.insertBefore(markdownContent, styles.markdownPlaceholder);
+              styles.markdownPlaceholder.remove();
+            }
+
+            if (styles.exportRoot && styles.exportRoot.remove) {
+              styles.exportRoot.remove();
+            }
           
           // Restore body styles
           document.body.style.display = styles.bodyDisplay;
@@ -859,6 +985,26 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
             mainContainer.style.height = styles.mainContainerHeight;
             mainContainer.style.display = styles.mainContainerDisplay;
           }
+
+            if (splitContainer) {
+              splitContainer.style.display = styles.splitContainerDisplay;
+              splitContainer.style.overflow = styles.splitContainerOverflow;
+            }
+
+            if (editorPane) {
+              editorPane.style.display = styles.editorPaneDisplay;
+              editorPane.style.flex = styles.editorPaneFlex;
+              editorPane.style.width = styles.editorPaneWidth;
+            }
+
+            if (splitter) {
+              splitter.style.display = styles.splitterDisplay;
+            }
+
+            if (viewerPane) {
+              viewerPane.style.flex = styles.viewerPaneFlex;
+              viewerPane.style.width = styles.viewerPaneWidth;
+            }
           
           // Restore TOC sidebar
           if (tocSidebar) {
@@ -869,9 +1015,11 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any) =
           }
           
           // Restore content
-          content.style.overflow = styles.contentOverflow;
-          content.style.height = styles.contentHeight;
-          content.style.maxHeight = styles.contentMaxHeight;
+          if (content) {
+            content.style.overflow = styles.contentOverflow;
+            content.style.height = styles.contentHeight;
+            content.style.maxHeight = styles.contentMaxHeight;
+          }
           
           delete window._pdfOriginalStyles;
           console.log('[PDF] Restored original styles');
@@ -941,21 +1089,29 @@ ipcMain.handle('clipboard-write', async (_event, text: string) => {
 ipcMain.handle('set-current-theme', async (_event, themeName: string) => {
   console.log('[THEME] Received theme update from renderer:', themeName);
   currentTheme = themeName;
-  // Recreate the window to update the menu with new checked state
+  // Keep menu state synchronized with the renderer-selected theme.
   if (mainWindow) {
     const currentMenu = Menu.getApplicationMenu();
     if (currentMenu) {
-      // Find and update theme menu items under the View menu
+      // Find and update the matching theme radio item under the View menu.
       const viewMenu = currentMenu.items.find(item => item.label === 'View');
       const themeMenuItem = viewMenu?.submenu?.items.find(item => item.label === 'Theme');
       if (themeMenuItem?.submenu) {
-        themeMenuItem.submenu.items.forEach(item => {
+        const selectedItem = themeMenuItem.submenu.items.find(item => {
+          if (item.type !== 'radio') return false;
           const normalizedLabel = item.label?.toLowerCase().replace(/\s+/g, '-');
-          item.checked = (normalizedLabel === themeName);
+          return normalizedLabel === themeName;
         });
+        if (selectedItem) {
+          selectedItem.checked = true;
+        }
       }
     }
   }
+});
+
+ipcMain.handle('set-file-menu-enabled', async (_event, enabled: boolean) => {
+  setFileActionMenuEnabled(!!enabled);
 });
 
 ipcMain.handle('get-app-version', async () => {

@@ -25,7 +25,7 @@ declare global {
       save: (sessionData: any) => Promise<any>;
     };
     printExport: {
-      exportPDF: (filePath: string, themeData?: any) => Promise<string | null>;
+      exportPDF: (filePath: string, themeData?: any, pageSettings?: any) => Promise<string | null>;
     };
     menuEvents: {
       onMenuOpen: (callback: () => void) => void;
@@ -39,6 +39,9 @@ declare global {
       onMenuThemeChange: (callback: (event: any, theme: string) => void) => void;
       onMenuToggleTOC: (callback: () => void) => void;
       onMenuSave: (callback: () => void) => void;
+    };
+    menuState: {
+      setFileActionsEnabled: (enabled: boolean) => Promise<void>;
     };
       themeAPI: {
         setCurrentTheme: (themeName: string) => Promise<void>;
@@ -95,6 +98,63 @@ const SESSION_SAVE_DEBOUNCE_MS = 1500;
 let sessionSaveHandle: number | null = null;
 let currentThemeBaseFontSize = '16px';
 
+type PageSizePreset = 'A4' | 'Letter' | 'Legal' | 'Custom';
+
+interface PageSettings {
+  size: PageSizePreset;
+  customWidthMm: number;
+  customHeightMm: number;
+  orientation: 'portrait' | 'landscape';
+  marginsMm: { top: number; bottom: number; left: number; right: number };
+  pageView: boolean;
+}
+
+const defaultPageSettings: PageSettings = {
+  size: 'A4',
+  customWidthMm: 210,
+  customHeightMm: 297,
+  orientation: 'portrait',
+  marginsMm: { top: 15, bottom: 15, left: 12, right: 12 },
+  pageView: false,
+};
+
+// Normalize stray square-bracket math blocks into $$...$$ so they render without visible brackets.
+function normalizeBracketMath(md: string): string {
+  // Match blocks that start at line beginning with '[' and end with ']' on their own line
+  return md.replace(/(^|\n)\[\s*\n([\s\S]*?)\n\]\s*(\n|$)/g, (_m, lead, inner, trail) => {
+    const trimmed = inner.trim();
+    return `${lead}$$\n${trimmed}\n$$${trail}`;
+  });
+}
+
+function isLikelyMathContent(content: string): boolean {
+  const trimmed = content.trim().replace(/^\$+|\$+$/g, '').trim();
+  if (!trimmed) return false;
+  return /\\[A-Za-z]+|[\^_=]|\d\s*[/+*=<>-]\s*\d|\\(?:times|cdot|frac|dfrac|tfrac|sqrt|left|right|overline|neq|approx|subset|ge|le|in|mathbb|text)/.test(trimmed);
+}
+
+function normalizeEscapedMathDelimiters(md: string): string {
+  const normalizeInline = (_match: string, inner: string) => {
+    const trimmed = inner.trim().replace(/^\$+|\$+$/g, '').trim();
+    if (!trimmed) return '';
+    return isLikelyMathContent(trimmed) ? `$${trimmed}$` : trimmed;
+  };
+
+  const normalizeBlock = (_match: string, inner: string) => {
+    const trimmed = inner.trim().replace(/^\$+|\$+$/g, '').trim();
+    if (!trimmed) return '';
+    return isLikelyMathContent(trimmed) ? `$$\n${trimmed}\n$$` : trimmed;
+  };
+
+  return md
+    .replace(/\\\(([\s\S]*?)\\\)/g, normalizeInline)
+    .replace(/\\\[([\s\S]*?)\\\]/g, normalizeBlock);
+}
+
+function normalizeMathDelimiters(md: string): string {
+  return normalizeEscapedMathDelimiters(normalizeBracketMath(md));
+}
+
 // Initialize markdown-it with texmath plugin for VS Code-style math rendering
 const md = new MarkdownIt({
   html: true,
@@ -105,15 +165,57 @@ const md = new MarkdownIt({
   engine: {
     // Custom engine that preserves LaTeX for MathJax to render
     renderToString(tex: string, options: any) {
-      // texmath passes display:true for block math, false for inline
-      if (options && options.display) {
-        return `$$${tex}$$`;
+      // texmath sets options.displayMode (not options.display) for block math.
+      // Also detect multiline content (from $$\n...\n$$ blocks) which math_block passes
+      // with no displayMode flag on the rule. Use \[...\] for display math to avoid
+      // the JavaScript String.replace() special pattern where $$ → $ in replacement strings.
+      const isDisplay = !!(options && (options.display || options.displayMode)) || tex.includes('\n');
+      if (isDisplay) {
+        return `\\[${tex}\\]`;
       }
       return `$${tex}$`;
     }
   },
   delimiters: ['dollars', 'brackets', 'gitlab', 'julia', 'kramdown'], // Support all common delimiters
 });
+
+// Simple YAML frontmatter extractor for MathJax macros
+function extractFrontmatter(markdown: string) {
+  if (!markdown.startsWith('---')) return { body: markdown, macros: {} as Record<string, string> };
+  const end = markdown.indexOf('\n---', 3);
+  if (end === -1) return { body: markdown, macros: {} as Record<string, string> };
+  const front = markdown.slice(3, end).trim(); // between the --- markers
+  const bodyStart = markdown.indexOf('\n', end + 4);
+  const body = bodyStart === -1 ? '' : markdown.slice(bodyStart + 1);
+  const macros: Record<string, string> = {};
+  let inMacros = false;
+  front.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (/^macros\s*:\s*$/i.test(trimmed)) {
+      inMacros = true;
+      return;
+    }
+    if (!inMacros) return;
+    const match = trimmed.match(/^([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+)$/);
+    if (match) {
+      const [, name, value] = match;
+      macros[name] = value;
+    }
+  });
+  return { body, macros };
+}
+
+function applyMathJaxMacros(macros: Record<string, string>) {
+  if (!macros || Object.keys(macros).length === 0) return;
+  const mj = (window as any).MathJax;
+  const texConfig = mj?.config?.tex;
+  if (!texConfig) return;
+  texConfig.macros = { ...(texConfig.macros || {}), ...macros };
+  // Refresh MathJax so new macros are honored
+  if (mj.texReset) mj.texReset();
+  if (mj.typesetClear) mj.typesetClear();
+}
 
 // Patch the dollars inline regex to support spaces in math expressions
 // The default regex /\$((?:[^\s\\])|(?:\S.*?[^\s\\]))\$/gy rejects expressions with spaces
@@ -526,6 +628,10 @@ function applyTheme(themeName: keyof typeof themes) {
   content.style.backgroundColor = theme.content;
   
   const mdContent = document.getElementById('markdown-content')!;
+  // If page view is active, sync markdown-content background inline so it always matches
+  if (loadPageSettings().pageView) {
+    mdContent.style.backgroundColor = theme.content;
+  }
   mdContent.style.color = theme.text;
   mdContent.style.fontFamily = theme.fontFamily;
   mdContent.style.lineHeight = theme.lineHeight;
@@ -543,6 +649,7 @@ function applyTheme(themeName: keyof typeof themes) {
   document.documentElement.style.setProperty('--theme-quote-bg', theme.quoteBg);
   document.documentElement.style.setProperty('--theme-quote-border', theme.quoteBorder);
   document.documentElement.style.setProperty('--theme-quote-text', theme.quoteText);
+  document.documentElement.style.setProperty('--page-paper-bg', theme.content);
   
   // Update all themed elements
   const headings = mdContent.querySelectorAll('h1, h2, h3, h4, h5, h6');
@@ -617,11 +724,283 @@ function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default',
   }
 }
 
+// Page settings helpers
+function loadPageSettings(): PageSettings {
+  try {
+    const raw = localStorage.getItem('pageSettings');
+    if (!raw) return { ...defaultPageSettings };
+    const parsed = JSON.parse(raw);
+    return { ...defaultPageSettings, ...parsed, marginsMm: { ...defaultPageSettings.marginsMm, ...(parsed.marginsMm || {}) } };
+  } catch {
+    return { ...defaultPageSettings };
+  }
+}
+
+function savePageSettings(settings: PageSettings) {
+  localStorage.setItem('pageSettings', JSON.stringify(settings));
+}
+
+function mmToIn(mm: number) {
+  return mm / 25.4;
+}
+
+function pageSettingsToInches(ps: PageSettings) {
+  const presetDimensionsMm: Record<PageSizePreset, { w: number; h: number }> = {
+    A4: { w: 210, h: 297 },
+    Letter: { w: 216, h: 279 },
+    Legal: { w: 216, h: 356 },
+    Custom: { w: ps.customWidthMm, h: ps.customHeightMm },
+  };
+  const { w, h } = presetDimensionsMm[ps.size];
+  const width = ps.orientation === 'portrait' ? w : h;
+  const height = ps.orientation === 'portrait' ? h : w;
+  return {
+    widthIn: mmToIn(width),
+    heightIn: mmToIn(height),
+    marginsIn: {
+      top: mmToIn(ps.marginsMm.top),
+      bottom: mmToIn(ps.marginsMm.bottom),
+      left: mmToIn(ps.marginsMm.left),
+      right: mmToIn(ps.marginsMm.right),
+    },
+  };
+}
+
+function applyPageView(settings: PageSettings) {
+  const content = document.getElementById('markdown-content');
+  const viewerPane = document.getElementById('content');
+  if (!content) return;
+  if (!settings.pageView) {
+    viewerPane?.classList.remove('page-view-active');
+    content.classList.remove('page-view');
+    content.style.maxWidth = '';
+    content.style.padding = '';
+    content.style.position = '';
+    content.style.backgroundColor = ''; // Let applyTheme inline style control it again
+    clearPageGuides();
+    clearPageBreakMarkers();
+    return;
+  }
+  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
+    settings.size === 'Letter' ? { w: 216, h: 279 } :
+    settings.size === 'Legal' ? { w: 216, h: 356 } :
+    { w: settings.customWidthMm, h: settings.customHeightMm };
+  const w = settings.orientation === 'portrait' ? presetMm.w : presetMm.h;
+  const h = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const dpi = 96;
+  const widthPx = mmToIn(w) * dpi;
+  const paddingTop = mmToIn(settings.marginsMm.top) * dpi;
+  const paddingBottom = mmToIn(settings.marginsMm.bottom) * dpi;
+  const paddingLeft = mmToIn(settings.marginsMm.left) * dpi;
+  const paddingRight = mmToIn(settings.marginsMm.right) * dpi;
+  // Determine paper background: use inline style already set by applyTheme, or CSS variable, or fallback
+  const paperBg = (viewerPane as HTMLElement | null)?.style.backgroundColor
+    || getComputedStyle(document.documentElement).getPropertyValue('--page-paper-bg').trim()
+    || '#ffffff';
+  if (viewerPane) viewerPane.style.backgroundColor = paperBg;
+  content.style.backgroundColor = paperBg;
+  viewerPane?.classList.add('page-view-active');
+  content.classList.add('page-view');
+  content.style.position = 'relative';
+  content.style.maxWidth = `${widthPx}px`;
+  content.style.marginLeft = 'auto';
+  content.style.marginRight = 'auto';
+  content.style.padding = `${paddingTop}px ${paddingRight}px ${paddingBottom}px ${paddingLeft}px`;
+  renderPageGuides(settings, content, widthPx, paddingTop, paddingBottom);
+  computePageBreaks(settings);
+}
+
+function clearPageGuides() {
+  const content = document.getElementById('markdown-content');
+  if (!content) return;
+  content.querySelectorAll('.page-guide').forEach(el => el.remove());
+}
+
+function clearPageBreakMarkers() {
+  const content = document.getElementById('markdown-content');
+  if (!content) return;
+  content.querySelectorAll('.page-break-before').forEach(el => el.classList.remove('page-break-before'));
+}
+
+function renderPageGuides(settings: PageSettings, content: HTMLElement, pageWidthPx: number, paddingTopPx: number, paddingBottomPx: number) {
+  clearPageGuides();
+  const dpi = 96;
+  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
+    settings.size === 'Letter' ? { w: 216, h: 279 } :
+    settings.size === 'Legal' ? { w: 216, h: 356 } :
+    { w: settings.customWidthMm, h: settings.customHeightMm };
+  const hMm = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const pageHeightPx = mmToIn(hMm) * dpi;
+  const usableHeightPx = pageHeightPx - paddingTopPx - paddingBottomPx;
+  if (usableHeightPx <= 0) return;
+  const total = content.scrollHeight;
+  let y = usableHeightPx + paddingTopPx;
+  let pageNum = 1;
+  while (y < total) {
+    const line = document.createElement('div');
+    line.className = 'page-guide';
+    line.style.top = `${y}px`;
+    line.textContent = `${pageNum + 1}`;
+    line.setAttribute('data-page-break', String(pageNum + 1));
+    content.appendChild(line);
+    y += usableHeightPx;
+    pageNum += 1;
+  }
+}
+
+function computePageBreaks(settings: PageSettings) {
+  const content = document.getElementById('markdown-content');
+  if (!content) return;
+  clearPageBreakMarkers();
+  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
+    settings.size === 'Letter' ? { w: 216, h: 279 } :
+    settings.size === 'Legal' ? { w: 216, h: 356 } :
+    { w: settings.customWidthMm, h: settings.customHeightMm };
+  const hMm = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const dpi = 96;
+  const pageHeightPx = mmToIn(hMm) * dpi;
+  const paddingTopPx = mmToIn(settings.marginsMm.top) * dpi;
+  const paddingBottomPx = mmToIn(settings.marginsMm.bottom) * dpi;
+  const usableHeightPx = pageHeightPx - paddingTopPx - paddingBottomPx;
+  if (usableHeightPx <= 0) return;
+
+  const blocks = Array.from(content.querySelectorAll<HTMLElement>(
+    'h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table, img, mjx-container, .mermaid-diagram, .uml-sequence-diagram, .resizable-mermaid, .resizable-image'
+  ));
+
+  const contentRect = content.getBoundingClientRect();
+  let currentLimit = paddingTopPx + usableHeightPx;
+  let pageNumber = 1;
+
+  for (const el of blocks) {
+    const rect = el.getBoundingClientRect();
+    const top = rect.top - contentRect.top;
+    const bottom = rect.bottom - contentRect.top;
+    if (bottom > currentLimit) {
+      el.classList.add('page-break-before');
+      pageNumber += 1;
+      currentLimit = top + usableHeightPx; // next page limit starts after this element
+    }
+  }
+}
+
+function setupPageSettingsUI() {
+  const btn = document.getElementById('page-settings-btn');
+  const modal = document.getElementById('page-settings-modal');
+  if (!btn || !modal) return;
+  const closeBtn = document.getElementById('page-settings-close');
+  const cancelBtn = document.getElementById('page-settings-cancel');
+  const saveBtn = document.getElementById('page-settings-save');
+  const pageSizeSelect = document.getElementById('page-size-select') as HTMLSelectElement;
+  const customRow = document.getElementById('custom-size-row');
+  const customW = document.getElementById('custom-width') as HTMLInputElement;
+  const customH = document.getElementById('custom-height') as HTMLInputElement;
+  const orientSelect = document.getElementById('orientation-select') as HTMLSelectElement;
+  const mTop = document.getElementById('margin-top') as HTMLInputElement;
+  const mBottom = document.getElementById('margin-bottom') as HTMLInputElement;
+  const mLeft = document.getElementById('margin-left') as HTMLInputElement;
+  const mRight = document.getElementById('margin-right') as HTMLInputElement;
+  const pageViewToggle = document.getElementById('page-view-toggle') as HTMLInputElement;
+
+  const refreshCustomVisibility = () => {
+    if (pageSizeSelect.value === 'Custom') {
+      customRow?.classList.remove('hidden');
+    } else {
+      customRow?.classList.add('hidden');
+    }
+  };
+
+  const loadUI = () => {
+    const s = loadPageSettings();
+    pageSizeSelect.value = s.size;
+    customW.value = String(s.customWidthMm);
+    customH.value = String(s.customHeightMm);
+    orientSelect.value = s.orientation;
+    mTop.value = String(s.marginsMm.top);
+    mBottom.value = String(s.marginsMm.bottom);
+    mLeft.value = String(s.marginsMm.left);
+    mRight.value = String(s.marginsMm.right);
+    pageViewToggle.checked = s.pageView;
+    refreshCustomVisibility();
+  };
+
+  const closeModal = () => modal.classList.add('hidden');
+  const openModal = () => {
+    loadUI();
+    modal.classList.remove('hidden');
+  };
+
+  btn.addEventListener('click', openModal);
+  closeBtn?.addEventListener('click', closeModal);
+  cancelBtn?.addEventListener('click', closeModal);
+  pageSizeSelect.addEventListener('change', refreshCustomVisibility);
+
+  saveBtn?.addEventListener('click', () => {
+    const settings: PageSettings = {
+      ...defaultPageSettings,
+      size: pageSizeSelect.value as PageSizePreset,
+      customWidthMm: parseFloat(customW.value) || defaultPageSettings.customWidthMm,
+      customHeightMm: parseFloat(customH.value) || defaultPageSettings.customHeightMm,
+      orientation: orientSelect.value as 'portrait' | 'landscape',
+      marginsMm: {
+        top: parseFloat(mTop.value) || defaultPageSettings.marginsMm.top,
+        bottom: parseFloat(mBottom.value) || defaultPageSettings.marginsMm.bottom,
+        left: parseFloat(mLeft.value) || defaultPageSettings.marginsMm.left,
+        right: parseFloat(mRight.value) || defaultPageSettings.marginsMm.right,
+      },
+      pageView: pageViewToggle.checked,
+    };
+    savePageSettings(settings);
+    applyPageView(settings);
+    closeModal();
+    showStatus('Page settings saved', 'success');
+  });
+
+  // Apply on load
+  applyPageView(loadPageSettings());
+}
+
+// Debounced helper for resize-driven pagination
+let resizeTimer: number | null = null;
+function scheduleReflow() {
+  if (resizeTimer) window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    const ps = loadPageSettings();
+    if (ps.pageView) {
+      applyPageView(ps);
+      computePageBreaks(ps);
+    }
+  }, 150);
+}
 // Process Mermaid diagrams
 async function processMermaidDiagrams(container: HTMLElement) {
   if (!window.mermaid) {
     return;
   }
+
+  const validateMermaid = (code: string): string | null => {
+    try {
+      window.mermaid.parse(code);
+      return null;
+    } catch (err: any) {
+      const loc = err?.hash?.loc;
+      const where = loc ? ` (line ${loc.first_line})` : '';
+      return `Mermaid parse error${where}: ${err?.message || err}`;
+    }
+  };
+
+  const checkDanglingArrows = (code: string) => {
+    const lines = code.split('\n');
+    return lines
+      .map((line, idx) => ({ line: line.trim(), idx }))
+      .filter(({ line }) => {
+        if (!line) return false;
+        if (/^(note\s+(left|right|over)|title|box|end|participant|actor)\b/i.test(line)) return false;
+        return /^[^:\n]+[-.]+>\s*$/i.test(line);
+      })
+      .map(({ idx }) => idx + 1);
+  };
 
   // Find unprocessed mermaid code blocks
   const mermaidBlocks = container.querySelectorAll('code.language-mermaid:not([data-mermaid-processed])');
@@ -640,8 +1019,25 @@ async function processMermaidDiagrams(container: HTMLElement) {
     const diagramDiv = document.createElement('div');
     diagramDiv.className = 'mermaid-diagram';
     diagramDiv.id = diagramId;
-  diagramDiv.textContent = code;
-  (block as HTMLElement).setAttribute('data-mermaid-processed', 'true');
+    (block as HTMLElement).setAttribute('data-mermaid-processed', 'true');
+
+    const dangling = checkDanglingArrows(code);
+    if (dangling.length > 0) {
+      diagramDiv.textContent = `Error rendering diagram: Line(s) ${dangling.join(', ')} are missing a target actor`;
+      diagramDiv.setAttribute('data-mermaid-error', 'true');
+      pre.replaceWith(diagramDiv);
+      continue;
+    }
+
+    const parseError = validateMermaid(code);
+    if (parseError) {
+      diagramDiv.textContent = parseError;
+      diagramDiv.setAttribute('data-mermaid-error', 'true');
+      pre.replaceWith(diagramDiv);
+      continue;
+    }
+
+    diagramDiv.textContent = code;
     
     // Replace the code block with the diagram container
     pre.replaceWith(diagramDiv);
@@ -650,7 +1046,7 @@ async function processMermaidDiagrams(container: HTMLElement) {
   // Render all diagrams
   try {
     await window.mermaid.run({
-      querySelector: '.mermaid-diagram'
+      querySelector: '.mermaid-diagram:not([data-mermaid-error])'
     });
   } catch (err) {
     console.error('[MERMAID] Mermaid rendering error:', err);
@@ -659,38 +1055,83 @@ async function processMermaidDiagrams(container: HTMLElement) {
 }
 
 // Process UML sequence diagrams
-function processUMLSequenceDiagrams(container: HTMLElement) {
-  if (!window.Diagram) {
+// We map `uml-sequence-diagram` fences into Mermaid sequence diagrams for a single renderer path.
+// A light pre-parse check surfaces the most common authoring error (dangling arrows).
+async function processUMLSequenceDiagrams(container: HTMLElement) {
+  if (!window.mermaid) {
     return;
   }
 
-  // Find unprocessed UML sequence diagram blocks
+  const validateMermaid = (code: string): string | null => {
+    try {
+      window.mermaid.parse(code);
+      return null;
+    } catch (err: any) {
+      const loc = err?.hash?.loc;
+      const where = loc ? ` (line ${loc.first_line})` : '';
+      return `Mermaid parse error${where}: ${err?.message || err}`;
+    }
+  };
+
   const umlBlocks = container.querySelectorAll('code.language-uml-sequence-diagram:not([data-uml-processed])');
-  
+
   for (const block of Array.from(umlBlocks)) {
     const pre = block.parentElement;
     if (!pre || pre.tagName !== 'PRE') {
       continue;
     }
-    
-    // Get the diagram code
-    const code = block.textContent || '';
-    
+
+    const code = (block.textContent || '').trimEnd();
+    const lines = code.split('\n');
+
+    // Detect lines with an arrow but no target actor (e.g., "Alice-->")
+    const danglingArrowLines = lines
+      .map((line, idx) => ({ line, idx }))
+      .filter(({ line }) => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        // Skip note/title/box keywords that intentionally lack arrows
+        if (/^(note\s+(left|right|over)|title|box|end|participant|actor)\b/i.test(trimmed)) return false;
+        return /^[^:\n]+[-.]+>\s*$/i.test(trimmed);
+      });
+
     // Create a container for the diagram
+    const diagramId = `mermaid-diagram-${mermaidCounter++}`;
     const diagramDiv = document.createElement('div');
-    diagramDiv.className = 'uml-sequence-diagram';
-    
-    // Replace the code block with the diagram container
-  pre.replaceWith(diagramDiv);
-    (block as HTMLElement).setAttribute('data-uml-processed', 'true');    // Render the diagram
-    try {
-      const diagram = window.Diagram.parse(code);
-      diagram.drawSVG(diagramDiv, { theme: 'simple' });
-    } catch (err) {
-      console.error('[UML] UML sequence diagram rendering error:', err);
-      console.error('[UML] Error details:', JSON.stringify(err, null, 2));
-      diagramDiv.textContent = 'Error rendering diagram: ' + (err as Error).message;
+    diagramDiv.className = 'mermaid-diagram';
+    diagramDiv.id = diagramId;
+
+    (block as HTMLElement).setAttribute('data-uml-processed', 'true');
+
+    if (danglingArrowLines.length > 0) {
+      const msg = danglingArrowLines
+        .map(({ idx }) => `Line ${idx + 1}: message is missing a target actor`)
+        .join('\n');
+      diagramDiv.textContent = `Error rendering diagram: ${msg}`;
+      pre.replaceWith(diagramDiv);
+      continue;
     }
+
+    // Convert to Mermaid sequenceDiagram syntax if the author didn't include the directive
+    const mermaidCode = /^sequenceDiagram\b/.test(code) ? code : `sequenceDiagram\n${code}`;
+    const parseError = validateMermaid(mermaidCode);
+    if (parseError) {
+      diagramDiv.textContent = parseError;
+      diagramDiv.setAttribute('data-mermaid-error', 'true');
+      pre.replaceWith(diagramDiv);
+      continue;
+    }
+
+    diagramDiv.textContent = mermaidCode;
+    pre.replaceWith(diagramDiv);
+  }
+
+  // Render all diagrams (Mermaid and converted UML)
+  try {
+    await window.mermaid.run({ querySelector: '.mermaid-diagram:not([data-mermaid-error])' });
+  } catch (err) {
+    console.error('[UML→MERMAID] Rendering error:', err);
+    console.error('[UML→MERMAID] Error details:', JSON.stringify(err, null, 2));
   }
 }
 
@@ -919,8 +1360,13 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   const contentDiv = document.getElementById('markdown-content')!;
   const emptyState = document.querySelector('.empty-state') as HTMLElement;
   
+  // Extract frontmatter macros (optional) and strip it from the rendered body
+  const { body: markdownBodyRaw, macros } = extractFrontmatter(tab.content);
+  const markdownBody = normalizeMathDelimiters(markdownBodyRaw);
+  applyMathJaxMacros(macros);
+
   // Process markdown with markdown-it (no manual math extraction needed!)
-  let html = md.render(tab.content);
+  let html = md.render(markdownBody);
   
   // SAFE image path rewriting using DOM (preserve absolute, file://, UNC, drive-letter paths)
   if (tab.filePath) {
@@ -964,9 +1410,11 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'foreignObject'],
     ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
                'xmlns', 'viewBox', 'preserveAspectRatio', 'focusable',
-               'aria-hidden', 'role', 'tabindex'],
+               'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href'],
     FORCE_BODY: false,
   });
+  const psInitial = loadPageSettings();
+  applyPageView(psInitial);
   // Enhance images with per-image resizing controls before further processing
   setupResizableImages(contentDiv);
   
@@ -975,25 +1423,37 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   emptyState.style.display = 'none';
 
   // Process diagrams and math on every render (tabs rebuild the DOM each time)
-    // Process Mermaid diagrams first
-    await processMermaidDiagrams(contentDiv);
-    setupResizableMermaidDiagrams(contentDiv);
+  // Process Mermaid diagrams first
+  await processMermaidDiagrams(contentDiv);
+  setupResizableMermaidDiagrams(contentDiv);
 
-    // Process UML sequence diagrams
-    processUMLSequenceDiagrams(contentDiv);
+  // Process UML sequence diagrams (converted to Mermaid under the hood)
+  await processUMLSequenceDiagrams(contentDiv);
 
-    // Typeset math with MathJax
-    if (window.MathJax && window.MathJax.typesetPromise) {
-      try {
-        await window.MathJax.typesetPromise([contentDiv]);        // Give MathJax a bit more time to complete DOM updates
-        await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (err) {
-        console.error('[MATHJAX] MathJax typeset error:', err);
-        console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
-      }
+  // Typeset math with MathJax
+  if (window.MathJax && window.MathJax.typesetPromise) {
+    try {
+      await window.MathJax.typesetPromise([contentDiv]);        // Give MathJax a bit more time to complete DOM updates
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (err) {
+      console.error('[MATHJAX] MathJax typeset error:', err);
+      console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
     }
-    
+  }
   
+  // Apply page view and recompute breaks after all rendering is settled
+  const psAfterRender = loadPageSettings();
+  if (psAfterRender.pageView) {
+    applyPageView(psAfterRender);
+    computePageBreaks(psAfterRender);
+  }
+  
+  // Apply page view and compute pagination after all rendering/MathJax
+  const ps = loadPageSettings();
+  if (ps.pageView) {
+    applyPageView(ps);
+    computePageBreaks(ps);
+  }
   
   // Apply current theme
   const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
@@ -1050,6 +1510,16 @@ async function waitForRenderingComplete(): Promise<void> {
 (window as any).waitForRenderingComplete = waitForRenderingComplete;
 (window as any).renderTab = renderTab;
 (window as any).activeTabIndex = () => activeTabIndex;
+(window as any).automationExportPDF = exportPDF;
+
+// Automation helper: load content into a new tab (used by Playwright tests)
+function automationLoadFile(content: string, filePath: string) {
+  const title = filePath.split(/[/\\]/).pop() || 'untitled';
+  const tab = { filePath, content, title } as Tab;
+  tabs.push(tab);
+  renderTab(tabs.length - 1, { skipEditorUpdate: true });
+}
+(window as any).automationLoadFile = automationLoadFile;
 
 // Generate Table of Contents from headings
 function generateTOC() {
@@ -1615,6 +2085,15 @@ function updateTabUI() {
     });
     (menu as any)._wired = true;
   }
+
+  syncFileMenuState();
+}
+
+function syncFileMenuState() {
+  const hasOpenFile = activeTabIndex >= 0 && !!tabs[activeTabIndex];
+  window.menuState.setFileActionsEnabled(hasOpenFile).catch((error) => {
+    console.error('[MENU] Failed to sync file menu state:', error);
+  });
 }
 
 function fileDir(filePath: string): string {
@@ -1710,37 +2189,10 @@ async function openFile() {
     const filePaths = await window.filePicker.pickFile();
     
     if (filePaths && filePaths.length > 0) {
-      const filePath = filePaths[0];
-      const existingIndex = tabs.findIndex(t => t.filePath === filePath);
-      
-      if (existingIndex >= 0) {
-        renderTab(existingIndex);
-        return;
+      const uniquePaths = Array.from(new Set(filePaths.filter(Boolean)));
+      for (let index = 0; index < uniquePaths.length; index++) {
+        await openFilePath(uniquePaths[index], { activate: index === uniquePaths.length - 1 });
       }
-
-      // Read file content
-      const fileResult = await window.fileSystem.readFile(filePath);
-      if (!fileResult.success) {
-        console.error('Error reading file:', fileResult.error);
-        return;
-      }
-
-      // Get file modification time
-      const statsResult = await window.fileWatch.getFileStats(filePath);
-      const lastModified = statsResult.success ? statsResult.mtime : Date.now();
-
-      tabs.push({
-        filePath: filePath,
-        content: fileResult.content!,
-        title: filePath.split(/[/\\]/).pop() || 'Untitled',
-        lastModified: lastModified
-      });
-
-      // Start watching the file and allow its directory via the protocol handler
-      window.fileWatch.watchFile(filePath);
-      window.protocolDirs.allow(fileDir(filePath));
-
-      renderTab(tabs.length - 1);
     }
   } catch (error) {
     console.error('Error opening file:', error);
@@ -1748,19 +2200,22 @@ async function openFile() {
 }
 
 // Open a specific file path (used by drag-and-drop)
-async function openFilePath(filePath: string) {
+async function openFilePath(filePath: string, options: { activate?: boolean } = {}) {
+  const { activate = true } = options;
   try {
     const existingIndex = tabs.findIndex(t => t.filePath === filePath);
     if (existingIndex >= 0) {
-      renderTab(existingIndex);
-      return;
+      if (activate) {
+        await renderTab(existingIndex);
+      }
+      return true;
     }
 
     const fileResult = await window.fileSystem.readFile(filePath);
     if (!fileResult.success) {
       console.error('Error reading dropped file:', fileResult.error);
       showStatus('Open failed', 'error');
-      return;
+      return false;
     }
 
     const statsResult = await window.fileWatch.getFileStats(filePath);
@@ -1775,10 +2230,14 @@ async function openFilePath(filePath: string) {
 
     window.fileWatch.watchFile(filePath);
     window.protocolDirs.allow(fileDir(filePath));
-    renderTab(tabs.length - 1);
+    if (activate) {
+      await renderTab(tabs.length - 1);
+    }
+    return true;
   } catch (error) {
     console.error('Error opening dropped file:', error);
     showStatus('Open error', 'error');
+    return false;
   }
 }
 
@@ -1844,12 +2303,33 @@ async function exportPDF() {
     
     // Use the currently active theme
     const currentTheme = themes[currentThemeName];
-    
-    const savePath = await window.printExport.exportPDF(tab.filePath, currentTheme);
+
+    // Ensure page breaks are up to date and hide guides during export
+    const ps = loadPageSettings();
+    if (ps.pageView) {
+      // Ensure layout matches pagination: apply page view and recompute breaks
+      applyPageView(ps);
+      clearPageGuides();
+      computePageBreaks(ps);
+    }
+
+    const pageSettings = loadPageSettings();
+    const { widthIn, heightIn, marginsIn } = pageSettingsToInches(pageSettings);
+    const savePath = await window.printExport.exportPDF(tab.filePath, currentTheme, {
+      pageSize: { width: widthIn, height: heightIn },
+      margins: marginsIn,
+      orientation: pageSettings.orientation,
+      pageView: pageSettings.pageView,
+    });
     
     if (savePath) {
       // PDF saved successfully
       console.log('PDF saved to:', savePath);
+    }
+
+    // Restore guides if page view was on
+    if (ps.pageView) {
+      applyPageView(ps);
     }
   }
 }
@@ -1956,6 +2436,12 @@ window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
 window.menuEvents.onMenuSave(async () => {
   await saveActiveTab();
 });
+setupPageSettingsUI();
+
+// Recompute pagination on window resize
+window.addEventListener('resize', scheduleReflow);
+// Also after mouse/touch interactions (e.g., resizable diagrams/images)
+['mouseup', 'touchend'].forEach(evt => window.addEventListener(evt, scheduleReflow));
 
 // Font size menu events
 window.menuEvents.onMenuFontIncrease(() => {
@@ -2194,6 +2680,7 @@ style.textContent = `
       margin: 0 !important;
       padding: 0 !important;
       display: block !important;
+      background: var(--theme-body, #ffffff) !important;
     }
 
     .main-container {
@@ -2211,6 +2698,24 @@ style.textContent = `
       visibility: hidden !important;
     }
 
+    .editor-pane, .splitter {
+      display: none !important;
+      width: 0 !important;
+      min-width: 0 !important;
+      flex: 0 0 0 !important;
+    }
+
+    .split-container {
+      display: block !important;
+      overflow: visible !important;
+    }
+
+    .viewer-pane {
+      width: 100% !important;
+      flex: 1 1 auto !important;
+      overflow: visible !important;
+    }
+
     /* Hide interactive resize/drag handles */
     .resize-handle, .drag-handle { display: none !important; }
     .resizable-image:hover, .resizable-mermaid:hover { outline: none !important; }
@@ -2221,6 +2726,7 @@ style.textContent = `
       height: auto !important;
       overflow: visible !important;
       max-height: none !important;
+      background: var(--theme-content, var(--theme-body, #ffffff)) !important;
     }
 
     #markdown-content {
@@ -2230,6 +2736,7 @@ style.textContent = `
       padding: 20px !important;
       height: auto !important;
       overflow: visible !important;
+      background: var(--theme-content, var(--theme-body, #ffffff)) !important;
     }
 
     /* ── Page-break rules ─────────────────────────────────────────────── */
@@ -2482,6 +2989,8 @@ if ((window as any).ipc) {
 
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
+  syncFileMenuState();
+
   // Initialize TOC functionality
   initializeTOC();
   
@@ -2598,26 +3107,39 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       
-      // Try candidates in order and open the first that exists
+      // Resolve all valid dropped files and open them in order
+      const validPaths: string[] = [];
       for (const path of candidates) {
         if (!path) continue;
         try {
           const stats = await window.fileWatch.getFileStats(path);
-          if (stats.success) {
-            await openFilePath(path);
-            return;
+          if (stats.success && !validPaths.includes(path)) {
+            validPaths.push(path);
           }
         } catch (err) {
           // Continue to next candidate
         }
       }
+
+      if (validPaths.length > 0) {
+        for (let index = 0; index < validPaths.length; index++) {
+          await openFilePath(validPaths[index], { activate: index === validPaths.length - 1 });
+        }
+        if (validPaths.length > 1) {
+          showStatus(`Opened ${validPaths.length} files`, 'success');
+        }
+        return;
+      }
       
       // If we have files but couldn't get their paths, offer file picker
       if (files.length > 0 && candidates.length === 0) {
-        showStatus('Please select the file you dropped', 'success');
+        showStatus('Please select the files you dropped', 'success');
         const picked = await window.filePicker.pickFile();
         if (picked && picked.length > 0) {
-          await openFilePath(picked[0]);
+          const uniquePicked = Array.from(new Set(picked.filter(Boolean)));
+          for (let index = 0; index < uniquePicked.length; index++) {
+            await openFilePath(uniquePicked[index], { activate: index === uniquePicked.length - 1 });
+          }
           return;
         }
       }

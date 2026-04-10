@@ -71,7 +71,7 @@ jobs:
         run: npm run build
 
       - name: Build macOS installer
-        run: npm run dist:mac
+        run: npx electron-builder --mac --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

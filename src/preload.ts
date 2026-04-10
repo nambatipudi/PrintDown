@@ -37,8 +37,8 @@ contextBridge.exposeInMainWorld('session', {
 
 // Expose export/print APIs
 contextBridge.exposeInMainWorld('printExport', {
-  exportPDF: async (filePath: string, themeData?: any) => {
-    return await ipcRenderer.invoke('export-pdf', filePath, themeData);
+  exportPDF: async (filePath: string, themeData?: any, pageSettings?: any) => {
+    return await ipcRenderer.invoke('export-pdf', filePath, themeData, pageSettings);
   }
 });
 
@@ -87,6 +87,12 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuSave: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-save');
     ipcRenderer.on('menu-save', callback);
+  }
+});
+
+contextBridge.exposeInMainWorld('menuState', {
+  setFileActionsEnabled: async (enabled: boolean) => {
+    return await ipcRenderer.invoke('set-file-menu-enabled', enabled);
   }
 });
 
