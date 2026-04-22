@@ -97,6 +97,7 @@ const RENDER_DEBOUNCE_MS = 250;
 const SESSION_SAVE_DEBOUNCE_MS = 1500;
 let sessionSaveHandle: number | null = null;
 let currentThemeBaseFontSize = '16px';
+let renderGeneration = 0;
 
 type PageSizePreset = 'A4' | 'Letter' | 'Legal' | 'Custom';
 
@@ -134,21 +135,30 @@ function isLikelyMathContent(content: string): boolean {
 }
 
 function normalizeEscapedMathDelimiters(md: string): string {
+  const normalizeMathContent = (content: string) =>
+    content
+      .trim()
+      .replace(/^\$+|\$+$/g, '')
+      .trim()
+      // Some generated Markdown escapes TeX commands as \\frac inside \( ... \).
+      // MathJax expects a single command backslash.
+      .replace(/\\\\(?=[A-Za-z])/g, '\\');
+
   const normalizeInline = (_match: string, inner: string) => {
-    const trimmed = inner.trim().replace(/^\$+|\$+$/g, '').trim();
+    const trimmed = normalizeMathContent(inner);
     if (!trimmed) return '';
     return isLikelyMathContent(trimmed) ? `$${trimmed}$` : trimmed;
   };
 
   const normalizeBlock = (_match: string, inner: string) => {
-    const trimmed = inner.trim().replace(/^\$+|\$+$/g, '').trim();
+    const trimmed = normalizeMathContent(inner);
     if (!trimmed) return '';
     return isLikelyMathContent(trimmed) ? `$$\n${trimmed}\n$$` : trimmed;
   };
 
   return md
-    .replace(/\\\(([\s\S]*?)\\\)/g, normalizeInline)
-    .replace(/\\\[([\s\S]*?)\\\]/g, normalizeBlock);
+    .replace(/\\+\(([\s\S]*?)\\+\)/g, normalizeInline)
+    .replace(/\\+\[([\s\S]*?)\\+\]/g, normalizeBlock);
 }
 
 function normalizeMathDelimiters(md: string): string {
@@ -617,6 +627,33 @@ const themes = {
     lineHeight: '1.55'
   }
 };
+
+function isValidThemeName(themeName: string | null | undefined): themeName is keyof typeof themes {
+  return !!themeName && themeName in themes;
+}
+
+function resolveInitialTheme(preferredTheme?: string | null): keyof typeof themes {
+  if (isValidThemeName(preferredTheme)) {
+    return preferredTheme;
+  }
+
+  const savedTheme = localStorage.getItem('selectedTheme');
+  if (isValidThemeName(savedTheme)) {
+    return savedTheme;
+  }
+
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return prefersDark ? 'dark' : 'light';
+}
+
+function initializeTheme(preferredTheme?: string | null) {
+  const themeToApply = resolveInitialTheme(preferredTheme);
+  applyTheme(themeToApply);
+}
+
+function applyActiveTheme() {
+  applyTheme(currentThemeName);
+}
 
 function applyTheme(themeName: keyof typeof themes) {
   currentThemeName = themeName; // Track current theme
@@ -1230,7 +1267,14 @@ function refreshEditorFromTab(skipContentUpdate = false) {
   if (!cmView) return;
   const tab = tabs[activeTabIndex];
   if (!tab) {
-    cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: '' } });
+    if (cmView.state.doc.length > 0) {
+      cmView.dispatch({ changes: { from: 0, to: cmView.state.doc.length, insert: '' } });
+    }
+    cmView.dispatch({
+      effects: editableCompartment.reconfigure(EditorView.editable.of(isEditMode))
+    });
+    cmView.dom.classList.toggle('cm-readonly', !isEditMode);
+    try { cmView.scrollDOM.scrollTop = 0; } catch {}
     return;
   }
   if (!skipContentUpdate) {
@@ -1246,6 +1290,40 @@ function refreshEditorFromTab(skipContentUpdate = false) {
     effects: editableCompartment.reconfigure(EditorView.editable.of(isEditMode))
   });
   cmView.dom.classList.toggle('cm-readonly', !isEditMode);
+}
+
+function clearActiveDocumentView() {
+  renderGeneration++;
+  activeTabIndex = -1;
+
+  const contentDiv = document.getElementById('markdown-content');
+  const contentPane = document.getElementById('content');
+  const emptyState = document.querySelector('.empty-state') as HTMLElement | null;
+  const tocContent = document.getElementById('toc-content');
+
+  clearPageGuides();
+  clearPageBreakMarkers();
+
+  if (contentDiv) {
+    contentDiv.innerHTML = '';
+    contentDiv.style.display = 'none';
+    contentDiv.style.backgroundColor = '';
+    contentDiv.classList.remove('page-view');
+  }
+
+  if (contentPane) {
+    contentPane.classList.remove('page-view-active');
+  }
+
+  if (emptyState) {
+    emptyState.style.display = 'flex';
+  }
+
+  if (tocContent) {
+    tocContent.innerHTML = '<div class="toc-empty">No document open</div>';
+  }
+
+  refreshEditorFromTab();
 }
 
 // Ensure editor focuses after async rendering/layout settles
@@ -1352,6 +1430,7 @@ interface RenderOptions {
 }
 
 async function renderTab(index: number, options: RenderOptions = {}) {
+  const renderId = ++renderGeneration;
   activeTabIndex = index;
   const tab = tabs[index];
   
@@ -1413,6 +1492,8 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href'],
     FORCE_BODY: false,
   });
+  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  applyActiveTheme();
   const psInitial = loadPageSettings();
   applyPageView(psInitial);
   // Enhance images with per-image resizing controls before further processing
@@ -1425,10 +1506,12 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   // Process diagrams and math on every render (tabs rebuild the DOM each time)
   // Process Mermaid diagrams first
   await processMermaidDiagrams(contentDiv);
+  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
   setupResizableMermaidDiagrams(contentDiv);
 
   // Process UML sequence diagrams (converted to Mermaid under the hood)
   await processUMLSequenceDiagrams(contentDiv);
+  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
 
   // Typeset math with MathJax
   if (window.MathJax && window.MathJax.typesetPromise) {
@@ -1440,6 +1523,7 @@ async function renderTab(index: number, options: RenderOptions = {}) {
       console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
     }
   }
+  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
   
   // Apply page view and recompute breaks after all rendering is settled
   const psAfterRender = loadPageSettings();
@@ -1455,11 +1539,8 @@ async function renderTab(index: number, options: RenderOptions = {}) {
     computePageBreaks(ps);
   }
   
-  // Apply current theme
-  const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
-  if (themeSelect) {
-    applyTheme(themeSelect.value as keyof typeof themes);
-  }
+  // Reapply the active theme after async rendering adds/replaces content.
+  applyActiveTheme();
 
   updateTabUI();
   if (!options.skipEditorUpdate) {
@@ -2125,16 +2206,7 @@ function closeTab(index: number) {
   }
   
   if (tabs.length === 0) {
-    activeTabIndex = -1;
-    const contentDiv = document.getElementById('markdown-content')!;
-    const emptyState = document.querySelector('.empty-state') as HTMLElement;
-    contentDiv.style.display = 'none';
-    emptyState.style.display = 'flex';
-    // Clear TOC when no documents are open
-    const tocContent = document.getElementById('toc-content');
-    if (tocContent) {
-      tocContent.innerHTML = '<div class="toc-empty">No document open</div>';
-    }
+    clearActiveDocumentView();
   } else if (index === activeTabIndex) {
     renderTab(Math.min(index, tabs.length - 1));
   } else if (index < activeTabIndex) {
@@ -2145,7 +2217,9 @@ function closeTab(index: number) {
   
   updateTabUI();
   saveSession();
-  refreshEditorFromTab();
+  if (tabs.length > 0) {
+    refreshEditorFromTab();
+  }
 }
 
 function closeAllTabs() {
@@ -2159,19 +2233,9 @@ function closeAllTabs() {
   dirsToDisallow.forEach(dir => window.protocolDirs.disallow(dir));
 
   tabs.splice(0, tabs.length);
-  activeTabIndex = -1;
-  const contentDiv = document.getElementById('markdown-content')!;
-  const emptyState = document.querySelector('.empty-state') as HTMLElement;
-  contentDiv.style.display = 'none';
-  emptyState.style.display = 'flex';
-  // Clear TOC fully
-  const tocContent = document.getElementById('toc-content');
-  if (tocContent) {
-    tocContent.innerHTML = '<div class="toc-empty">No document open</div>';
-  }
+  clearActiveDocumentView();
   updateTabUI();
   saveSession(); // This will save an empty session, preventing unwanted restoration
-  refreshEditorFromTab();
 }
 
 function closeOthers(index: number) {
@@ -2525,20 +2589,7 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     let themeToApply: keyof typeof themes;
     let fontFactorToApply: number;
   
-    if (session.theme) {
-      // Use theme from session
-      themeToApply = session.theme as keyof typeof themes;
-    } else {
-      // Check localStorage, then system preference
-      const savedTheme = localStorage.getItem('selectedTheme');
-      if (savedTheme) {
-        themeToApply = savedTheme as keyof typeof themes;
-      } else {
-        // Detect system theme preference
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        themeToApply = prefersDark ? 'dark' : 'light';
-      }
-    }
+    themeToApply = resolveInitialTheme(session.theme);
   
     if (session.fontSizeFactor !== undefined) {
       fontFactorToApply = session.fontSizeFactor;
@@ -2547,11 +2598,7 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
     }
   
     // Apply theme
-    currentThemeName = themeToApply;
-    const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeToApply);
-    const themeConfig = themes[themeToApply];
-    initMermaid(isDarkTheme, themeToApply, themeConfig);
-    applyTheme(themeToApply);
+    initializeTheme(themeToApply);
   
     // Apply font size
     fontSizeFactor = fontFactorToApply;
@@ -2990,6 +3037,7 @@ if ((window as any).ipc) {
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
   syncFileMenuState();
+  initializeTheme();
 
   // Initialize TOC functionality
   initializeTOC();
