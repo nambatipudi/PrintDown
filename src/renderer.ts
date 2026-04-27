@@ -1503,25 +1503,47 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       
       // Add text label
       if (value && value.trim()) {
+        // Decode XML/HTML entities including &#xa; (newline), &#x27; etc.
+        let textContent = value.trim();
+        textContent = textContent
+          .replace(/&#xa;/gi, '\n')
+          .replace(/&#xA;/g, '\n')
+          .replace(/\n/g, '\n')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&#x27;/g, "'");
+
+        const lines = textContent.split('\n').filter((l: string) => l.length > 0);
+        const lineHeight = fontSize + 3;
+        const totalTextHeight = lines.length * lineHeight;
+        // Start y so all lines are vertically centered in the box
+        const startY = (y + height / 2) - (totalTextHeight / 2) + (lineHeight / 2);
+
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', String(x + width / 2));
-        text.setAttribute('y', String(y + height / 2));
+        text.setAttribute('y', String(startY));
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
         text.setAttribute('font-size', String(fontSize));
         text.setAttribute('font-family', 'Arial, sans-serif');
         text.setAttribute('fill', '#000');
         text.setAttribute('pointer-events', 'none');
-        text.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'space', 'preserve');
-        
-      // Add text - use single line for simplicity
-        // Text wrapping would require more complex measurement
-        // Decode HTML entities in text values
-        let textContent = value.trim();
-        // Replace common HTML entities
-        textContent = textContent.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'");
-        text.textContent = textContent;
-        
+
+        if (lines.length === 1) {
+          text.textContent = lines[0];
+        } else {
+          lines.forEach((line: string, idx: number) => {
+            const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+            tspan.setAttribute('x', String(x + width / 2));
+            tspan.setAttribute('y', String(startY + idx * lineHeight));
+            tspan.setAttribute('dominant-baseline', 'middle');
+            tspan.textContent = line;
+            text.appendChild(tspan);
+          });
+        }
+
         svg.appendChild(text);
       }
     }
