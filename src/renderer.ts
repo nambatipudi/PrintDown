@@ -1364,7 +1364,13 @@ function parseSvgDataUri(dataUri: string): SVGElement | null {
     const payload = dataUri.slice(comma + 1);
     let svgText = '';
     if (/;base64/i.test(header)) {
-      svgText = atob(payload);
+      // atob returns a binary string; convert bytes to UTF-8 text to avoid mojibake.
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      svgText = new TextDecoder('utf-8').decode(bytes);
     } else {
       svgText = decodeURIComponent(payload);
     }
