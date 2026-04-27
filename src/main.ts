@@ -318,7 +318,7 @@ function createWindow() {
               type: 'info',
               title: 'About Print Down',
               message: 'Print Down',
-              detail: `Version: ${app.getVersion()}\n\nA beautiful Markdown viewer and PDF exporter with:\n• Live preview with themes\n• Math equations (MathJax)\n• Mermaid diagrams\n• UML sequence diagrams\n• Adjustable font size\n• Export to PDF with proper margins\n\nCreated by: Nambatipudi\nGitHub: https://github.com/nambatipudi`,
+              detail: `Version: ${app.getVersion()}\n\nA beautiful Markdown viewer and PDF exporter with:\n• Live preview with themes\n• Math equations (MathJax)\n• Mermaid diagrams\n• UML sequence diagrams\n• Draw.io XML rendering (powered by diagrams.net)\n• Adjustable font size\n• Export to PDF with proper margins\n\nCredits:\n• diagrams.net / draw.io (Apache License 2.0)\n\nCreated by: Nambatipudi\nGitHub: https://github.com/nambatipudi`,
               buttons: ['OK']
             });
           }

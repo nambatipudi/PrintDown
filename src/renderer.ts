@@ -777,6 +777,9 @@ let mermaidCounter = 0;
 // Draw.io diagram counter
 let drawioCounter = 0;
 
+// Cache rendered draw.io SVGs by exact XML to avoid repeated iframe exports
+const drawioSvgCache = new Map<string, string>();
+
 // Initialize Mermaid
 function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default', theme?: any) {
   if (window.mermaid) {
@@ -1334,8 +1337,8 @@ async function processDrawioDiagrams(container: HTMLElement) {
       const svgContainer = (diagram as HTMLElement).querySelector('.drawio-svg-container') as HTMLElement;
       if (!svgContainer) continue;
       
-      // Parse and render the draw.io diagram
-      const svg = renderDrawioDiagramToSVG(xmlContent);
+      // Parse and render the draw.io diagram using diagrams.net engine first
+      const svg = await renderDrawioDiagramToSVG(xmlContent);
       if (svg) {
         svgContainer.appendChild(svg);
       } else {
@@ -1353,8 +1356,142 @@ async function processDrawioDiagrams(container: HTMLElement) {
   }
 }
 
-// Helper function to render draw.io XML to SVG
-function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
+function parseSvgDataUri(dataUri: string): SVGElement | null {
+  try {
+    const comma = dataUri.indexOf(',');
+    if (comma === -1) return null;
+    const header = dataUri.slice(0, comma);
+    const payload = dataUri.slice(comma + 1);
+    let svgText = '';
+    if (/;base64/i.test(header)) {
+      svgText = atob(payload);
+    } else {
+      svgText = decodeURIComponent(payload);
+    }
+    const parser = new DOMParser();
+    const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svg = svgDoc.documentElement;
+    if (!svg || svg.tagName.toLowerCase() !== 'svg') return null;
+    return document.importNode(svg, true) as unknown as SVGElement;
+  } catch (err) {
+    console.error('[DRAWIO] Failed to parse SVG data URI:', err);
+    return null;
+  }
+}
+
+async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<SVGElement | null> {
+  const cached = drawioSvgCache.get(xmlContent);
+  if (cached) {
+    return parseSvgDataUri(cached);
+  }
+
+  return new Promise((resolve) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.opacity = '0';
+    iframe.style.position = 'absolute';
+    iframe.style.left = '-9999px';
+    iframe.style.top = '-9999px';
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.setAttribute('tabindex', '-1');
+    iframe.src = 'https://embed.diagrams.net/?embed=1&proto=json&spin=0&ui=min&noSaveBtn=1&saveAndExit=0&noExitBtn=1';
+
+    let settled = false;
+    const timeoutId = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(null);
+      }
+    }, 12000);
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', onMessage);
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    };
+
+    const postToEmbed = (msg: Record<string, any>) => {
+      if (!iframe.contentWindow) return;
+      iframe.contentWindow.postMessage(JSON.stringify(msg), 'https://embed.diagrams.net');
+    };
+
+    const onMessage = (evt: MessageEvent) => {
+      if (evt.origin !== 'https://embed.diagrams.net') return;
+      if (evt.source !== iframe.contentWindow) return;
+
+      let msg: any = evt.data;
+      if (typeof msg === 'string') {
+        try {
+          msg = JSON.parse(msg);
+        } catch {
+          return;
+        }
+      }
+      if (!msg || typeof msg !== 'object') return;
+
+      if (msg.event === 'init') {
+        postToEmbed({
+          action: 'load',
+          xml: xmlContent,
+          noSaveBtn: 1,
+          noExitBtn: 1,
+          saveAndExit: 0,
+          modified: 0,
+          autosave: 0
+        });
+        return;
+      }
+
+      if (msg.event === 'load') {
+        postToEmbed({ action: 'export', format: 'svg', border: 0, embedImages: true });
+        return;
+      }
+
+      if (msg.event === 'export' && typeof msg.data === 'string') {
+        const svg = parseSvgDataUri(msg.data);
+        if (svg) {
+          drawioSvgCache.set(xmlContent, msg.data);
+          svg.style.border = '1px solid #e0e0e0';
+          svg.style.borderRadius = '4px';
+          svg.style.backgroundColor = '#ffffff';
+          svg.style.maxWidth = '100%';
+          svg.style.height = 'auto';
+        }
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(svg);
+        }
+        return;
+      }
+
+      if ((msg.event === 'export' && msg.error) || msg.error) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve(null);
+        }
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+  });
+}
+
+// Primary draw.io renderer: official diagrams.net export path with local fallback
+async function renderDrawioDiagramToSVG(xmlContent: string): Promise<SVGElement | null> {
+  const officialSvg = await renderDrawioDiagramToSVGViaEmbed(xmlContent);
+  if (officialSvg) {
+    return officialSvg;
+  }
+  return renderDrawioDiagramToSVGLegacy(xmlContent);
+}
+
+// Helper function to render draw.io XML to SVG (legacy local fallback)
+function renderDrawioDiagramToSVGLegacy(xmlContent: string): SVGElement | null {
   try {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
