@@ -556,6 +556,21 @@
       transition: color 0.3s ease;
     }
     #markdown-content p { margin: 10px 0; }
+    #markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+    }
+    #markdown-content th,
+    #markdown-content td {
+      border: 1px solid rgba(127, 127, 127, 0.4);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    #markdown-content th {
+      font-weight: 600;
+    }
     #markdown-content code { 
       padding: 2px 6px;
       border-radius: 3px;
@@ -792,8 +807,8 @@
         display: none !important;
       }
     }
-    /* Hard page breaks for print/preview */
-    .page-break-before {
+    /* Hard page breaks apply only when page view pagination is active */
+    #markdown-content.page-view .page-break-before {
       break-before: page;
       page-break-before: always;
     }

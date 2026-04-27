@@ -165,6 +165,49 @@ function normalizeMathDelimiters(md: string): string {
   return normalizeEscapedMathDelimiters(normalizeBracketMath(md));
 }
 
+function normalizeSvgCodeFences(md: string): string {
+  // Some generated documents wrap SVG in triple-backtick fences, which makes
+  // markdown-it render it as code instead of HTML. If a fenced block is pure
+  // SVG markup, unwrap it so the SVG renders normally.
+  const fencedBlockRegex = /(^|\n)[ \t]*```(?:svg|xml|html)?[^\n]*\n([\s\S]*?)\n[ \t]*```(?=\n|$)/gi;
+  return md.replace(fencedBlockRegex, (fullMatch, prefix, body) => {
+    const trimmed = body.trim();
+    if (/^<svg\b[\s\S]*<\/svg>$/i.test(trimmed)) {
+      return `${prefix}${trimmed}`;
+    }
+    return fullMatch;
+  });
+}
+
+function normalizeDocumentHtmlAndSvg(md: string): string {
+  let normalized = md;
+
+  // Markdown files are fragments. Document-level wrappers can confuse block parsing
+  // and make the rest of the document render as a single malformed HTML block.
+  normalized = normalized
+    .replace(/<!DOCTYPE[^>]*>/gi, '')
+    .replace(/<\/?html[^>]*>/gi, '')
+    .replace(/<\/?head[^>]*>/gi, '')
+    .replace(/<\/?body[^>]*>/gi, '');
+
+  // Ensure inline SVG explicitly declares the SVG namespace.
+  normalized = normalized.replace(
+    /<svg(?![^>]*\bxmlns\s*=\s*['"]http:\/\/www\.w3\.org\/2000\/svg['"])([^>]*)>/gi,
+    '<svg xmlns="http://www.w3.org/2000/svg"$1>'
+  );
+
+  // If an SVG opening tag is left unclosed, markdown-it may treat everything after
+  // it as raw HTML, which looks like a truncated document. Close unmatched SVG tags.
+  const openSvgCount = (normalized.match(/<svg\b[^>]*>/gi) || []).length;
+  const closeSvgCount = (normalized.match(/<\/svg>/gi) || []).length;
+  const missingClosers = openSvgCount - closeSvgCount;
+  if (missingClosers > 0) {
+    normalized += `\n${'</svg>\n'.repeat(missingClosers)}`;
+  }
+
+  return normalized;
+}
+
 // Initialize markdown-it with texmath plugin for VS Code-style math rendering
 const md = new MarkdownIt({
   html: true,
@@ -902,21 +945,47 @@ function computePageBreaks(settings: PageSettings) {
   if (usableHeightPx <= 0) return;
 
   const blocks = Array.from(content.querySelectorAll<HTMLElement>(
-    'h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table, img, mjx-container, .mermaid-diagram, .uml-sequence-diagram, .resizable-mermaid, .resizable-image'
+    'h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table, img, svg, mjx-container, .mermaid-diagram, .uml-sequence-diagram, .resizable-mermaid, .resizable-image'
   ));
+
+  const isQuestionHeading = (el: HTMLElement) => /^H[1-6]$/.test(el.tagName) && /^\d+\.$/.test((el.textContent || '').trim());
+
+  const findQuestionHeadingIndex = (startIndex: number) => {
+    for (let index = startIndex; index >= 0; index -= 1) {
+      if (isQuestionHeading(blocks[index])) return index;
+    }
+    return -1;
+  };
 
   const contentRect = content.getBoundingClientRect();
   let currentLimit = paddingTopPx + usableHeightPx;
-  let pageNumber = 1;
 
-  for (const el of blocks) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const el = blocks[index];
     const rect = el.getBoundingClientRect();
     const top = rect.top - contentRect.top;
     const bottom = rect.bottom - contentRect.top;
     if (bottom > currentLimit) {
-      el.classList.add('page-break-before');
-      pageNumber += 1;
-      currentLimit = top + usableHeightPx; // next page limit starts after this element
+      let breakTarget = el;
+      let breakTop = top;
+
+      const questionHeadingIndex = findQuestionHeadingIndex(index);
+      if (questionHeadingIndex >= 0) {
+        const questionHeading = blocks[questionHeadingIndex];
+        const nextQuestionIndex = blocks.findIndex((candidate, candidateIndex) => candidateIndex > questionHeadingIndex && isQuestionHeading(candidate));
+        const questionEndIndex = nextQuestionIndex >= 0 ? nextQuestionIndex - 1 : blocks.length - 1;
+        const questionTop = questionHeading.getBoundingClientRect().top - contentRect.top;
+        const questionBottom = blocks[questionEndIndex].getBoundingClientRect().bottom - contentRect.top;
+        const questionHeight = questionBottom - questionTop;
+
+        if (questionHeadingIndex < index && questionHeight <= usableHeightPx) {
+          breakTarget = questionHeading;
+          breakTop = questionTop;
+        }
+      }
+
+      breakTarget.classList.add('page-break-before');
+      currentLimit = breakTop + usableHeightPx;
     }
   }
 }
@@ -1441,7 +1510,9 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   
   // Extract frontmatter macros (optional) and strip it from the rendered body
   const { body: markdownBodyRaw, macros } = extractFrontmatter(tab.content);
-  const markdownBody = normalizeMathDelimiters(markdownBodyRaw);
+  const markdownBody = normalizeDocumentHtmlAndSvg(
+    normalizeSvgCodeFences(normalizeMathDelimiters(markdownBodyRaw))
+  );
   applyMathJaxMacros(macros);
 
   // Process markdown with markdown-it (no manual math extraction needed!)
@@ -1491,6 +1562,11 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'xmlns', 'viewBox', 'preserveAspectRatio', 'focusable',
                'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href'],
     FORCE_BODY: false,
+  });
+  // Tag raw markdown SVGs before MathJax runs so our responsive SVG CSS
+  // does not accidentally target MathJax's own internal SVG output.
+  contentDiv.querySelectorAll('svg').forEach(svg => {
+    svg.classList.add('raw-markdown-svg');
   });
   if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
   applyActiveTheme();
@@ -2822,6 +2898,7 @@ style.textContent = `
       page-break-inside: auto;
       width: 100% !important;
       max-width: 100% !important;
+      border-collapse: collapse !important;
       table-layout: fixed !important;
       box-sizing: border-box !important;
     }
@@ -2836,6 +2913,10 @@ style.textContent = `
     }
 
     td, th {
+      border: 1px solid rgba(127, 127, 127, 0.45) !important;
+      padding: 8px 10px !important;
+      text-align: left !important;
+      vertical-align: top !important;
       word-wrap: break-word !important;
       overflow-wrap: break-word !important;
       overflow: visible !important;
@@ -2846,6 +2927,20 @@ style.textContent = `
     img {
       max-width: 100% !important;
       height: auto !important;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    /* Raw inline SVG (from markdown HTML): scale to printable bounds so
+       oversized diagrams do not clip or truncate following content. */
+    svg.raw-markdown-svg {
+      display: block !important;
+      max-width: 100% !important;
+      max-height: 220mm !important;
+      width: auto !important;
+      height: auto !important;
+      margin: 0 auto !important;
+      overflow: visible !important;
       break-inside: avoid;
       page-break-inside: avoid;
     }
@@ -2915,6 +3010,14 @@ screenStyle.textContent = `
   #markdown-content .uml-sequence-diagram svg {
     max-width: 100%;
     height: auto;
+  }
+
+  /* Keep raw inline SVGs responsive in the editor/preview pane too. */
+  #markdown-content svg.raw-markdown-svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 12px auto;
   }
 
   /* Ensure inline math doesn't stick to neighboring text */
