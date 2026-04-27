@@ -1618,14 +1618,40 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         textContent = textContent
           .replace(/&#xa;/gi, '\n')
           .replace(/&#xA;/g, '\n')
+          .replace(/<br\s*\/?\s*>/gi, '\n')
+          .replace(/<\/div>\s*<div>/gi, '\n')
+          .replace(/<\/p>\s*<p>/gi, '\n')
           .replace(/\n/g, '\n')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
           .replace(/&amp;/g, '&')
           .replace(/&quot;/g, '"')
-          .replace(/&#x27;/g, "'");
+          .replace(/&#x27;/g, "'")
+          .replace(/<[^>]+>/g, '');
 
-        const lines = textContent.split('\n').filter((l: string) => l.length > 0);
+        const rawLines = textContent.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+        const whiteSpace = extractStyleAttribute(style, 'whiteSpace') || '';
+        const doWrap = whiteSpace === 'wrap';
+        const approxCharsPerLine = Math.max(8, Math.floor((width - 10) / Math.max(1, fontSize * 0.56)));
+        const lines: string[] = [];
+        for (const rawLine of rawLines) {
+          if (!doWrap || rawLine.length <= approxCharsPerLine) {
+            lines.push(rawLine);
+            continue;
+          }
+          const words = rawLine.split(/\s+/);
+          let current = '';
+          for (const word of words) {
+            const next = current ? `${current} ${word}` : word;
+            if (next.length > approxCharsPerLine && current) {
+              lines.push(current);
+              current = word;
+            } else {
+              current = next;
+            }
+          }
+          if (current) lines.push(current);
+        }
         const lineHeight = fontSize + 3;
         const totalTextHeight = lines.length * lineHeight;
 
@@ -1744,6 +1770,21 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       return 'arrow_' + markerColors.get(key);
     };
 
+    const getBorderAnchor = (cell: any, towardX: number, towardY: number) => {
+      const left = cell.x + offsetX;
+      const right = left + cell.width;
+      const top = cell.y + offsetY;
+      const bottom = top + cell.height;
+      const cx = left + cell.width / 2;
+      const cy = top + cell.height / 2;
+      const dx = towardX - cx;
+      const dy = towardY - cy;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        return { x: dx >= 0 ? right : left, y: cy };
+      }
+      return { x: cx, y: dy >= 0 ? bottom : top };
+    };
+
     for (const edge of edges) {
       const sourceCell = cellMap.get(edge.source);
       const targetCell = cellMap.get(edge.target);
@@ -1787,8 +1828,10 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
           { x: tx, y: ty }
         ];
       } else {
-        // Auto-route: simple orthogonal L or Z path
-        const sx = scx, sy = scy, tx = tcx, ty = tcy;
+        // Auto-route: orthogonal path using border anchors to avoid crossing node text
+        const start = getBorderAnchor(sourceCell, tcx, tcy);
+        const end = getBorderAnchor(targetCell, scx, scy);
+        const sx = start.x, sy = start.y, tx = end.x, ty = end.y;
         const midX = (sx + tx) / 2;
         pts = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
       }
