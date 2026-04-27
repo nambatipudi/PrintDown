@@ -1432,13 +1432,19 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
     }
     
     // Second pass: draw cells
+    const renderedIds = new Set<string>(); // Track already-rendered cells to prevent duplicates
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const id = cell.getAttribute('id');
       if (!id) continue;
       
+      // Skip if already rendered
+      if (renderedIds.has(id)) continue;
+      
       const cellData = cellMap.get(id);
       if (!cellData) continue;
+      
+      renderedIds.add(id);
       
       const { x, y, width, height, value, style } = cellData;
       
