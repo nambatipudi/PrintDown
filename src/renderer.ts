@@ -1379,23 +1379,56 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       return null;
     }
 
-    // Compute actual content bounds from cell geometries
-    let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+    // Pre-pass: collect raw geometry for every non-edge vertex cell so we can resolve parent chains
+    interface RawCell { id: string; parent: string; x: number; y: number; width: number; height: number; value: string; style: string; isEdge: boolean; }
+    const rawCells = new Map<string, RawCell>();
     const allCells = root.getElementsByTagName('mxCell');
     for (let i = 0; i < allCells.length; i++) {
       const cell = allCells[i];
+      const id = cell.getAttribute('id');
+      if (!id) continue;
+      const isEdge = cell.getAttribute('edge') === '1';
+      const parent = cell.getAttribute('parent') || '1';
       const geom = cell.getElementsByTagName('mxGeometry')[0];
-      if (!geom) continue;
-      const x = parseFloat(geom.getAttribute('x') || '0');
-      const y = parseFloat(geom.getAttribute('y') || '0');
-      const w = parseFloat(geom.getAttribute('width') || '0');
-      const h = parseFloat(geom.getAttribute('height') || '0');
-      if (w > 0 && h > 0) {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x + w);
-        maxY = Math.max(maxY, y + h);
+      if (!geom || geom.getAttribute('relative') === '1') continue;
+      rawCells.set(id, {
+        id, parent,
+        x: parseFloat(geom.getAttribute('x') || '0'),
+        y: parseFloat(geom.getAttribute('y') || '0'),
+        width: parseFloat(geom.getAttribute('width') || '0'),
+        height: parseFloat(geom.getAttribute('height') || '0'),
+        value: cell.getAttribute('value') || '',
+        style: cell.getAttribute('style') || '',
+        isEdge
+      });
+    }
+
+    // Resolve absolute position by walking parent chain (max depth 10 to avoid cycles)
+    const resolveAbsPos = (id: string): {x: number; y: number} => {
+      const rc = rawCells.get(id);
+      if (!rc || rc.parent === '0' || rc.parent === '1' || !rawCells.has(rc.parent)) {
+        return { x: rc ? rc.x : 0, y: rc ? rc.y : 0 };
       }
+      const parentPos = resolveAbsPos(rc.parent);
+      // For swimlane children, draw.io adds startSize (header height) to y when rendering
+      const parentCell = rawCells.get(rc.parent);
+      const parentStyle = parentCell ? parentCell.style : '';
+      const isSwimlane = parentStyle.includes('swimlane');
+      const startSize = isSwimlane ? parseFloat(extractStyleAttribute(parentStyle, 'startSize') || '30') : 0;
+      return { x: parentPos.x + rc.x, y: parentPos.y + startSize + rc.y };
+    };
+
+    // Compute actual content bounds from VERTEX cells only (using absolute positions)
+    let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+    for (const [id, rc] of rawCells) {
+      if (!id || id === '0' || id === '1') continue;
+      if (rc.isEdge) continue;
+      if (rc.width === 0 && rc.height === 0) continue;
+      const absPos = resolveAbsPos(id);
+      minX = Math.min(minX, absPos.x);
+      minY = Math.min(minY, absPos.y);
+      maxX = Math.max(maxX, absPos.x + rc.width);
+      maxY = Math.max(maxY, absPos.y + rc.height);
     }
     if (minX === Infinity) { minX = 0; minY = 0; }
     const padding = 20;
@@ -1430,76 +1463,65 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
     // Track which cell IDs are edges (so we can skip their label children)
     const edgeIds = new Set<string>();
     
-    // First pass: extract cells (vertices only - skip edges and edge labels)
+    // First pass: extract cells using resolved absolute positions from pre-pass
+    for (const [id, rc] of rawCells) {
+      if (id === '0' || id === '1') continue;
+      if (rc.isEdge) {
+        edgeIds.add(id);
+        continue;
+      }
+      if (rc.width === 0 && rc.height === 0) continue;
+      const absPos = resolveAbsPos(id);
+      cellMap.set(id, { x: absPos.x, y: absPos.y, width: rc.width, height: rc.height, value: rc.value, style: rc.style });
+    }
+
+    // Collect edges from cells (needs the DOM for waypoints and edge labels)
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const id = cell.getAttribute('id');
       if (!id || id === '0' || id === '1') continue;
-      
-      const edge = cell.getAttribute('edge') === '1';
-      const connectable = cell.getAttribute('connectable');
-      const parent = cell.getAttribute('parent');
-      
-      // Skip edge label cells (connectable=0 whose parent is an edge)
-      if (connectable === '0') continue;
-      
-      if (edge) {
-        edgeIds.add(id);
-        const source = cell.getAttribute('source');
-        const target = cell.getAttribute('target');
-        if (source && target) {
-          // Extract waypoints from mxGeometry/Array/mxPoint
-          const waypoints: Array<{x:number,y:number}> = [];
-          const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
-          if (mxGeom) {
-            const pts = mxGeom.getElementsByTagName('mxPoint');
-            for (let j = 0; j < pts.length; j++) {
-              const px = parseFloat(pts[j].getAttribute('x') || '0');
-              const py = parseFloat(pts[j].getAttribute('y') || '0');
-              waypoints.push({ x: px, y: py });
-            }
+      if (cell.getAttribute('edge') !== '1') continue;
+      const source = cell.getAttribute('source');
+      const target = cell.getAttribute('target');
+      if (source && target) {
+        const waypoints: Array<{x:number,y:number}> = [];
+        const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
+        if (mxGeom) {
+          const pts = mxGeom.getElementsByTagName('mxPoint');
+          for (let j = 0; j < pts.length; j++) {
+            const px = parseFloat(pts[j].getAttribute('x') || '0');
+            const py = parseFloat(pts[j].getAttribute('y') || '0');
+            waypoints.push({ x: px, y: py });
           }
-          // Extract edge label from child edgeLabel cells
-          let label = '';
-          for (let j = 0; j < cells.length; j++) {
-            const lc = cells[j];
-            if (lc.getAttribute('parent') === id && lc.getAttribute('connectable') === '0') {
-              label = lc.getAttribute('value') || '';
-              break;
-            }
-          }
-          const edgeStyle = cell.getAttribute('style') || '';
-          edges.push({ source, target, style: edgeStyle, waypoints, label });
         }
-        continue;
+        let label = '';
+        for (let j = 0; j < cells.length; j++) {
+          const lc = cells[j];
+          if (lc.getAttribute('parent') === id && lc.getAttribute('connectable') === '0') {
+            label = lc.getAttribute('value') || '';
+            break;
+          }
+        }
+        const edgeStyle = cell.getAttribute('style') || '';
+        edges.push({ source, target, style: edgeStyle, waypoints, label });
       }
-      
-      const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
-      if (!mxGeom) continue;
-      // Skip relative geometry (edge labels have relative="1" and no real coords)
-      if (mxGeom.getAttribute('relative') === '1') continue;
-      
-      const x = parseFloat(mxGeom.getAttribute('x') || '0');
-      const y = parseFloat(mxGeom.getAttribute('y') || '0');
-      const width = parseFloat(mxGeom.getAttribute('width') || '100');
-      const height = parseFloat(mxGeom.getAttribute('height') || '100');
-      // Skip zero-size cells
-      if (width === 0 && height === 0) continue;
-      const value = cell.getAttribute('value') || '';
-      const style = cell.getAttribute('style') || '';
-      
-      cellMap.set(id, { x, y, width, height, value, style });
     }
     
     // Second pass: draw vertex cells
     const renderedIds = new Set<string>();
-    for (let i = 0; i < cells.length; i++) {
-      const cell = cells[i];
-      const id = cell.getAttribute('id');
-      if (!id) continue;
+    // We need a defs section for clipPaths - create it lazily
+    let svgDefs: SVGDefsElement | null = null;
+    const getOrCreateDefs = () => {
+      if (!svgDefs) {
+        svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs') as unknown as SVGDefsElement;
+        svg.insertBefore(svgDefs, svg.firstChild);
+      }
+      return svgDefs;
+    };
+    let clipPathCounter = 0;
+
+    for (const [id, cellData] of cellMap) {
       if (renderedIds.has(id)) continue;
-      const cellData = cellMap.get(id);
-      if (!cellData) continue;
       renderedIds.add(id);
       
       // Apply offset to translate content into view
@@ -1508,6 +1530,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       const { width, height, value, style } = cellData;
       
       // Parse style
+      const isSwimlane = style.includes('swimlane');
       const shape = extractStyleAttribute(style, 'shape') || (style.includes('ellipse') ? 'ellipse' : (style.includes('rhombus') ? 'rhombus' : ''));
       const fillColor = extractStyleAttribute(style, 'fillColor') || '#dae8fc';
       const strokeColor = extractStyleAttribute(style, 'strokeColor') || '#6c8ebf';
@@ -1547,7 +1570,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         polygon.setAttribute('stroke-width', '1.5');
         svg.appendChild(polygon);
       } else {
-        // Draw rectangle (default)
+        // Draw rectangle (default). For swimlane, also draw header bar.
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', String(x));
         rect.setAttribute('y', String(y));
@@ -1562,6 +1585,30 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
           rect.setAttribute('ry', '5');
         }
         svg.appendChild(rect);
+
+        if (isSwimlane) {
+          const startSize = parseFloat(extractStyleAttribute(style, 'startSize') || '30');
+          // Draw header bar background
+          const hdr = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          hdr.setAttribute('x', String(x));
+          hdr.setAttribute('y', String(y));
+          hdr.setAttribute('width', String(width));
+          hdr.setAttribute('height', String(startSize));
+          hdr.setAttribute('fill', fillColor);
+          hdr.setAttribute('fill-opacity', fillOpacity);
+          hdr.setAttribute('stroke', strokeColor);
+          hdr.setAttribute('stroke-width', '1.5');
+          svg.appendChild(hdr);
+          // Draw separator line
+          const sep = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          sep.setAttribute('x1', String(x));
+          sep.setAttribute('y1', String(y + startSize));
+          sep.setAttribute('x2', String(x + width));
+          sep.setAttribute('y2', String(y + startSize));
+          sep.setAttribute('stroke', strokeColor);
+          sep.setAttribute('stroke-width', '1.5');
+          svg.appendChild(sep);
+        }
       }
       
       // Add text label
@@ -1583,12 +1630,17 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         const totalTextHeight = lines.length * lineHeight;
 
         // Handle text alignment from style
-        const verticalAlign = extractStyleAttribute(style, 'verticalAlign') || 'middle';
+        // For swimlane: text goes in the header (top startSize px), verticalAlign=top
+        const verticalAlign = isSwimlane ? 'top' : (extractStyleAttribute(style, 'verticalAlign') || 'middle');
         const alignH = extractStyleAttribute(style, 'align') || 'center';
         const spacingLeft = parseFloat(extractStyleAttribute(style, 'spacingLeft') || '0');
         const fontColor = extractStyleAttribute(style, 'fontColor') || '#000000';
         const fontStyleAttr = parseInt(extractStyleAttribute(style, 'fontStyle') || '0');
         const isBold = (fontStyleAttr & 1) === 1;
+
+        // For swimlane: render text only in header
+        const swimStartSize = isSwimlane ? parseFloat(extractStyleAttribute(style, 'startSize') || '30') : 0;
+        const textAreaHeight = isSwimlane ? swimStartSize : height;
 
         // Compute text x position and anchor
         let textX: number;
@@ -1609,10 +1661,23 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         if (verticalAlign === 'top') {
           startY = y + fontSize + 4;
         } else if (verticalAlign === 'bottom') {
-          startY = y + height - totalTextHeight + lineHeight / 2;
+          startY = y + textAreaHeight - totalTextHeight + lineHeight / 2;
         } else {
-          startY = (y + height / 2) - (totalTextHeight / 2) + (lineHeight / 2);
+          startY = (y + textAreaHeight / 2) - (totalTextHeight / 2) + (lineHeight / 2);
         }
+
+        // Create clipPath to prevent text overflow outside cell bounds
+        const clipId = `clip_${++clipPathCounter}`;
+        const defs = getOrCreateDefs();
+        const clipPath = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
+        clipPath.setAttribute('id', clipId);
+        const clipRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        clipRect.setAttribute('x', String(x + 1));
+        clipRect.setAttribute('y', String(y + 1));
+        clipRect.setAttribute('width', String(Math.max(0, width - 2)));
+        clipRect.setAttribute('height', String(Math.max(0, textAreaHeight - 2)));
+        clipPath.appendChild(clipRect);
+        defs.appendChild(clipPath);
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', String(textX));
@@ -1623,6 +1688,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         text.setAttribute('font-family', 'Arial, sans-serif');
         text.setAttribute('fill', fontColor);
         text.setAttribute('pointer-events', 'none');
+        text.setAttribute('clip-path', `url(#${clipId})`);
         if (isBold) text.setAttribute('font-weight', 'bold');
 
         if (lines.length === 1) {
@@ -1690,21 +1756,41 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       const openArrow = edge.style.includes('endArrow=open') || edge.style.includes('endFill=0');
       const noArrow = edge.style.includes('endArrow=none');
 
-      // Build path points: source center → waypoints → target center
-      const sx = sourceCell.x + offsetX + sourceCell.width / 2;
-      const sy = sourceCell.y + offsetY + sourceCell.height / 2;
-      const tx = targetCell.x + offsetX + targetCell.width / 2;
-      const ty = targetCell.y + offsetY + targetCell.height / 2;
+      // Compute edge endpoints on cell borders (not centers)
+      const scx = sourceCell.x + offsetX + sourceCell.width / 2;
+      const scy = sourceCell.y + offsetY + sourceCell.height / 2;
+      const tcx = targetCell.x + offsetX + targetCell.width / 2;
+      const tcy = targetCell.y + offsetY + targetCell.height / 2;
 
       let pts: Array<{x:number,y:number}>;
       if (edge.waypoints.length > 0) {
+        // Use explicit waypoints - connect source edge → waypoints → target edge
+        const firstWp = { x: edge.waypoints[0].x + offsetX, y: edge.waypoints[0].y + offsetY };
+        const lastWp = { x: edge.waypoints[edge.waypoints.length-1].x + offsetX, y: edge.waypoints[edge.waypoints.length-1].y + offsetY };
+        // Exit source toward first waypoint
+        const sx = Math.abs(firstWp.x - scx) > Math.abs(firstWp.y - scy)
+          ? (firstWp.x > scx ? sourceCell.x + offsetX + sourceCell.width : sourceCell.x + offsetX)
+          : scx;
+        const sy = Math.abs(firstWp.x - scx) > Math.abs(firstWp.y - scy)
+          ? scy
+          : (firstWp.y > scy ? sourceCell.y + offsetY + sourceCell.height : sourceCell.y + offsetY);
+        // Enter target from last waypoint
+        const tx = Math.abs(lastWp.x - tcx) > Math.abs(lastWp.y - tcy)
+          ? (lastWp.x < tcx ? targetCell.x + offsetX : targetCell.x + offsetX + targetCell.width)
+          : tcx;
+        const ty = Math.abs(lastWp.x - tcx) > Math.abs(lastWp.y - tcy)
+          ? tcy
+          : (lastWp.y < tcy ? targetCell.y + offsetY : targetCell.y + offsetY + targetCell.height);
         pts = [
           { x: sx, y: sy },
           ...edge.waypoints.map(p => ({ x: p.x + offsetX, y: p.y + offsetY })),
           { x: tx, y: ty }
         ];
       } else {
-        pts = [{ x: sx, y: sy }, { x: tx, y: ty }];
+        // Auto-route: simple orthogonal L or Z path
+        const sx = scx, sy = scy, tx = tcx, ty = tcy;
+        const midX = (sx + tx) / 2;
+        pts = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
       }
 
       // Build SVG path
