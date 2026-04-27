@@ -1373,30 +1373,55 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
     const modelWidth = parseInt(mxGraphModel.getAttribute('dx') || '800');
     const modelHeight = parseInt(mxGraphModel.getAttribute('dy') || '600');
     
+    // Get all cells - first pass to compute bounding box
+    const root = xmlDoc.getElementsByTagName('root')[0];
+    if (!root) {
+      return null;
+    }
+
+    // Compute actual content bounds from cell geometries
+    let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+    const allCells = root.getElementsByTagName('mxCell');
+    for (let i = 0; i < allCells.length; i++) {
+      const cell = allCells[i];
+      const geom = cell.getElementsByTagName('mxGeometry')[0];
+      if (!geom) continue;
+      const x = parseFloat(geom.getAttribute('x') || '0');
+      const y = parseFloat(geom.getAttribute('y') || '0');
+      const w = parseFloat(geom.getAttribute('width') || '0');
+      const h = parseFloat(geom.getAttribute('height') || '0');
+      if (w > 0 && h > 0) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + w);
+        maxY = Math.max(maxY, y + h);
+      }
+    }
+    if (minX === Infinity) { minX = 0; minY = 0; }
+    const padding = 20;
+    const contentW = maxX - minX + padding * 2;
+    const contentH = maxY - minY + padding * 2;
+    const offsetX = -minX + padding;
+    const offsetY = -minY + padding;
+
     // Create SVG element
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', String(Math.max(modelWidth, 400)));
-    svg.setAttribute('height', String(Math.max(modelHeight, 300)));
-    svg.setAttribute('viewBox', `0 0 ${modelWidth} ${modelHeight}`);
+    svg.setAttribute('width', String(contentW));
+    svg.setAttribute('height', String(contentH));
+    svg.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
     svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
     svg.style.border = '1px solid #e0e0e0';
     svg.style.borderRadius = '4px';
     svg.style.backgroundColor = '#ffffff';
     svg.style.maxWidth = '100%';
     svg.style.height = 'auto';
-    
+
     // Draw background
     const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('width', String(modelWidth));
-    bg.setAttribute('height', String(modelHeight));
+    bg.setAttribute('width', String(contentW));
+    bg.setAttribute('height', String(contentH));
     bg.setAttribute('fill', '#ffffff');
     svg.appendChild(bg);
-    
-    // Get all cells
-    const root = xmlDoc.getElementsByTagName('root')[0];
-    if (!root) {
-      return svg;
-    }
     
     const cells = root.getElementsByTagName('mxCell');
     const edges: Array<{ source: string; target: string }> = [];
@@ -1446,7 +1471,10 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       
       renderedIds.add(id);
       
-      const { x, y, width, height, value, style } = cellData;
+      // Apply offset to translate content into view
+      const x = cellData.x + offsetX;
+      const y = cellData.y + offsetY;
+      const { width, height, value, style } = cellData;
       
       // Parse style
       const shape = extractStyleAttribute(style, 'shape') || (style.includes('ellipse') ? 'ellipse' : (style.includes('rhombus') ? 'rhombus' : ''));
@@ -1454,9 +1482,10 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       const strokeColor = extractStyleAttribute(style, 'strokeColor') || '#6c8ebf';
       const rounded = extractStyleAttribute(style, 'rounded') === '1';
       let fontSize = parseInt(extractStyleAttribute(style, 'fontSize') || '12');
-      // Ensure font size is reasonable
       if (isNaN(fontSize) || fontSize < 8) fontSize = 12;
       if (fontSize > 48) fontSize = 48;
+      const opacityVal = extractStyleAttribute(style, 'opacity');
+      const fillOpacity = opacityVal ? String(parseFloat(opacityVal) / 100) : '1';
       
       // Draw based on shape
       if (shape === 'ellipse' || shape === 'circle') {
@@ -1467,6 +1496,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         ellipse.setAttribute('rx', String(width / 2));
         ellipse.setAttribute('ry', String(height / 2));
         ellipse.setAttribute('fill', fillColor);
+        ellipse.setAttribute('fill-opacity', fillOpacity);
         ellipse.setAttribute('stroke', strokeColor);
         ellipse.setAttribute('stroke-width', '1.5');
         svg.appendChild(ellipse);
@@ -1481,6 +1511,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
         polygon.setAttribute('points', points.map(p => p.join(',')).join(' '));
         polygon.setAttribute('fill', fillColor);
+        polygon.setAttribute('fill-opacity', fillOpacity);
         polygon.setAttribute('stroke', strokeColor);
         polygon.setAttribute('stroke-width', '1.5');
         svg.appendChild(polygon);
@@ -1492,6 +1523,7 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         rect.setAttribute('width', String(width));
         rect.setAttribute('height', String(height));
         rect.setAttribute('fill', fillColor);
+        rect.setAttribute('fill-opacity', fillOpacity);
         rect.setAttribute('stroke', strokeColor);
         rect.setAttribute('stroke-width', '1.5');
         if (rounded) {
@@ -1518,25 +1550,56 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         const lines = textContent.split('\n').filter((l: string) => l.length > 0);
         const lineHeight = fontSize + 3;
         const totalTextHeight = lines.length * lineHeight;
-        // Start y so all lines are vertically centered in the box
-        const startY = (y + height / 2) - (totalTextHeight / 2) + (lineHeight / 2);
+
+        // Handle text alignment from style
+        const verticalAlign = extractStyleAttribute(style, 'verticalAlign') || 'middle';
+        const alignH = extractStyleAttribute(style, 'align') || 'center';
+        const spacingLeft = parseFloat(extractStyleAttribute(style, 'spacingLeft') || '0');
+        const fontColor = extractStyleAttribute(style, 'fontColor') || '#000000';
+        const fontStyleAttr = parseInt(extractStyleAttribute(style, 'fontStyle') || '0');
+        const isBold = (fontStyleAttr & 1) === 1;
+
+        // Compute text x position and anchor
+        let textX: number;
+        let textAnchor: string;
+        if (alignH === 'left') {
+          textX = x + spacingLeft + 4;
+          textAnchor = 'start';
+        } else if (alignH === 'right') {
+          textX = x + width - 4;
+          textAnchor = 'end';
+        } else {
+          textX = x + width / 2;
+          textAnchor = 'middle';
+        }
+
+        // Compute text y start position
+        let startY: number;
+        if (verticalAlign === 'top') {
+          startY = y + fontSize + 4;
+        } else if (verticalAlign === 'bottom') {
+          startY = y + height - totalTextHeight + lineHeight / 2;
+        } else {
+          startY = (y + height / 2) - (totalTextHeight / 2) + (lineHeight / 2);
+        }
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', String(x + width / 2));
+        text.setAttribute('x', String(textX));
         text.setAttribute('y', String(startY));
-        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('text-anchor', textAnchor);
         text.setAttribute('dominant-baseline', 'middle');
         text.setAttribute('font-size', String(fontSize));
         text.setAttribute('font-family', 'Arial, sans-serif');
-        text.setAttribute('fill', '#000');
+        text.setAttribute('fill', fontColor);
         text.setAttribute('pointer-events', 'none');
+        if (isBold) text.setAttribute('font-weight', 'bold');
 
         if (lines.length === 1) {
           text.textContent = lines[0];
         } else {
           lines.forEach((line: string, idx: number) => {
             const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-            tspan.setAttribute('x', String(x + width / 2));
+            tspan.setAttribute('x', String(textX));
             tspan.setAttribute('y', String(startY + idx * lineHeight));
             tspan.setAttribute('dominant-baseline', 'middle');
             tspan.textContent = line;
@@ -1554,10 +1617,10 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       const targetCell = cellMap.get(edge.target);
       
       if (sourceCell && targetCell) {
-        const x1 = sourceCell.x + sourceCell.width / 2;
-        const y1 = sourceCell.y + sourceCell.height / 2;
-        const x2 = targetCell.x + targetCell.width / 2;
-        const y2 = targetCell.y + targetCell.height / 2;
+        const x1 = sourceCell.x + offsetX + sourceCell.width / 2;
+        const y1 = sourceCell.y + offsetY + sourceCell.height / 2;
+        const x2 = targetCell.x + offsetX + targetCell.width / 2;
+        const y2 = targetCell.y + offsetY + targetCell.height / 2;
         
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('x1', String(x1));
@@ -1925,8 +1988,8 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href',
                'data-drawio-xml', 'data-drawio-content', 'data-drawio-rendered',
                'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r',
-               'width', 'height', 'points', 'fill', 'stroke', 'stroke-width',
-               'text-anchor', 'font-size', 'font-family', 'marker-end',
+               'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width',
+               'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
                'markerWidth', 'markerHeight', 'refX', 'refY', 'orient'],
     FORCE_BODY: false,
   });
