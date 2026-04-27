@@ -296,6 +296,50 @@ Bob-->Alice: I am good thanks!
 ```
 ````
 
+### Draw.io Diagram Example
+
+PrintDown now supports embedded Draw.io XML diagrams. You can draw professional diagrams in draw.io and embed them directly in your markdown files:
+
+````markdown
+```xml
+<mxGraphModel dx="800" dy="600" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="2" value="Start" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+      <mxGeometry x="350" y="20" width="80" height="80" as="geometry"/>
+    </mxCell>
+    <!-- ... more diagram elements ... -->
+  </root>
+</mxGraphModel>
+```
+````
+
+**Features:**
+- Automatic SVG rendering of Draw.io XML diagrams (no external dependencies required)
+- Real-time visualization of flowcharts, architecture diagrams, and more
+- "✎ Edit in Draw.io" button to open diagrams in the online editor
+- "📋 Copy XML" button to copy diagram content
+- Full PDF export support with proper SVG embedding
+
+**Supported diagram elements:**
+- Rectangles with optional rounded corners
+- Ellipses and circles
+- Diamond shapes (rhombus) for decision points
+- Connecting edges with arrows
+- Text labels on shapes
+- Custom colors and styling
+
+**How to create Draw.io diagrams:**
+1. Go to https://app.diagrams.net/
+2. Create your diagram using shapes, connectors, and text
+3. Click "Extras → Edit Diagram" to get the XML
+4. Copy the entire `<mxGraphModel>` XML block
+5. Wrap in a markdown code block with `xml` language tag
+6. Embed in your markdown file
+
+See [Draw.io_Diagram_Example.md](Test_Files/Draw.io_Diagram_Example.md) for complete examples.
+
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).

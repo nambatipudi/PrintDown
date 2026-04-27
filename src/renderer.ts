@@ -774,6 +774,9 @@ function applyTheme(themeName: keyof typeof themes) {
 // Mermaid diagram counter
 let mermaidCounter = 0;
 
+// Draw.io diagram counter
+let drawioCounter = 0;
+
 // Initialize Mermaid
 function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default', theme?: any) {
   if (window.mermaid) {
@@ -1241,6 +1244,323 @@ async function processUMLSequenceDiagrams(container: HTMLElement) {
   }
 }
 
+// Process Draw.io diagrams (XML-based)
+// Parses mxGraphModel XML and renders as SVG
+async function processDrawioDiagrams(container: HTMLElement) {
+  // Find all XML code blocks containing draw.io diagrams
+  const xmlBlocks = container.querySelectorAll('code.language-xml:not([data-drawio-processed])');
+  
+  for (const block of Array.from(xmlBlocks)) {
+    const pre = block.parentElement;
+    if (!pre || pre.tagName !== 'PRE') {
+      continue;
+    }
+    
+    // Get the XML content
+    const xmlContent = block.textContent || '';
+    
+    // Check if this is a draw.io diagram (must contain mxGraphModel)
+    if (!xmlContent.toLowerCase().includes('<mxgraphmodel')) {
+      (block as HTMLElement).setAttribute('data-drawio-processed', 'true');
+      continue;
+    }
+    
+    (block as HTMLElement).setAttribute('data-drawio-processed', 'true');
+    
+    // Create a container for the draw.io diagram
+    const diagramId = `drawio-diagram-${drawioCounter++}`;
+    const diagramDiv = document.createElement('div');
+    diagramDiv.className = 'drawio-diagram';
+    diagramDiv.id = diagramId;
+    diagramDiv.setAttribute('data-drawio-xml', 'true');
+    
+    // Store the XML in a data attribute for later access/export
+    diagramDiv.setAttribute('data-drawio-content', xmlContent);
+    
+    // Create a toolbar for diagram actions
+    const toolbar = document.createElement('div');
+    toolbar.className = 'drawio-toolbar';
+    
+    // Add "Open in Draw.io" button
+    const openButton = document.createElement('button');
+    openButton.className = 'drawio-action-btn';
+    openButton.textContent = '✎ Edit in Draw.io';
+    openButton.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Encode the XML for use in draw.io URL
+      const encoded = btoa(xmlContent);
+      const drawioUrl = `https://app.diagrams.net/?splash=0&mode=browser#H${encoded}`;
+      window.open(drawioUrl, '_blank');
+    };
+    toolbar.appendChild(openButton);
+    
+    // Add copy button
+    const copyButton = document.createElement('button');
+    copyButton.className = 'drawio-action-btn';
+    copyButton.textContent = '📋 Copy XML';
+    copyButton.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigator.clipboard.writeText(xmlContent).then(() => {
+        copyButton.textContent = '✓ Copied!';
+        setTimeout(() => {
+          copyButton.textContent = '📋 Copy XML';
+        }, 2000);
+      });
+    };
+    toolbar.appendChild(copyButton);
+    
+    diagramDiv.appendChild(toolbar);
+    
+    // Create SVG container
+    const svgContainer = document.createElement('div');
+    svgContainer.className = 'drawio-svg-container';
+    svgContainer.id = `${diagramId}-svg`;
+    diagramDiv.appendChild(svgContainer);
+    
+    // Replace the code block with the diagram container
+    pre.replaceWith(diagramDiv);
+  }
+  
+  // Render all draw.io diagrams
+  const diagrams = container.querySelectorAll('[data-drawio-xml]:not([data-drawio-rendered])');
+  for (const diagram of Array.from(diagrams)) {
+    try {
+      const xmlContent = (diagram as HTMLElement).getAttribute('data-drawio-content');
+      if (!xmlContent) continue;
+      
+      (diagram as HTMLElement).setAttribute('data-drawio-rendered', 'true');
+      const svgContainer = (diagram as HTMLElement).querySelector('.drawio-svg-container') as HTMLElement;
+      if (!svgContainer) continue;
+      
+      // Parse and render the draw.io diagram
+      const svg = renderDrawioDiagramToSVG(xmlContent);
+      if (svg) {
+        svgContainer.appendChild(svg);
+      } else {
+        svgContainer.textContent = 'Error rendering diagram';
+        svgContainer.style.color = '#f44747';
+      }
+    } catch (err) {
+      console.error('[DRAWIO] Error processing diagram:', err);
+      const svgContainer = (diagram as HTMLElement).querySelector('.drawio-svg-container') as HTMLElement;
+      if (svgContainer) {
+        svgContainer.textContent = 'Error rendering diagram';
+        svgContainer.style.color = '#f44747';
+      }
+    }
+  }
+}
+
+// Helper function to render draw.io XML to SVG
+function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
+    
+    // Check for parser errors
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return null;
+    }
+    
+    const mxGraphModel = xmlDoc.getElementsByTagName('mxGraphModel')[0];
+    if (!mxGraphModel) {
+      return null;
+    }
+    
+    // Get canvas dimensions
+    const modelWidth = parseInt(mxGraphModel.getAttribute('dx') || '800');
+    const modelHeight = parseInt(mxGraphModel.getAttribute('dy') || '600');
+    
+    // Create SVG element
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', String(Math.max(modelWidth, 400)));
+    svg.setAttribute('height', String(Math.max(modelHeight, 300)));
+    svg.setAttribute('viewBox', `0 0 ${modelWidth} ${modelHeight}`);
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.style.border = '1px solid #e0e0e0';
+    svg.style.borderRadius = '4px';
+    svg.style.backgroundColor = '#ffffff';
+    svg.style.maxWidth = '100%';
+    svg.style.height = 'auto';
+    
+    // Draw background
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('width', String(modelWidth));
+    bg.setAttribute('height', String(modelHeight));
+    bg.setAttribute('fill', '#ffffff');
+    svg.appendChild(bg);
+    
+    // Get all cells
+    const root = xmlDoc.getElementsByTagName('root')[0];
+    if (!root) {
+      return svg;
+    }
+    
+    const cells = root.getElementsByTagName('mxCell');
+    const edges: Array<{ source: string; target: string }> = [];
+    const cellMap = new Map<string, any>();
+    
+    // First pass: extract cells (vertices)
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      const id = cell.getAttribute('id');
+      if (!id || id === '0' || id === '1') continue;
+      
+      const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
+      if (!mxGeom) continue;
+      
+      const x = parseFloat(mxGeom.getAttribute('x') || '0');
+      const y = parseFloat(mxGeom.getAttribute('y') || '0');
+      const width = parseFloat(mxGeom.getAttribute('width') || '100');
+      const height = parseFloat(mxGeom.getAttribute('height') || '100');
+      const value = cell.getAttribute('value') || '';
+      const style = cell.getAttribute('style') || '';
+      const vertex = cell.getAttribute('vertex') === '1';
+      const edge = cell.getAttribute('edge') === '1';
+      
+      if (edge) {
+        const source = cell.getAttribute('source');
+        const target = cell.getAttribute('target');
+        if (source && target) {
+          edges.push({ source, target });
+        }
+      }
+      
+      cellMap.set(id, { x, y, width, height, value, style, vertex, edge });
+    }
+    
+    // Second pass: draw cells
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      const id = cell.getAttribute('id');
+      if (!id) continue;
+      
+      const cellData = cellMap.get(id);
+      if (!cellData) continue;
+      
+      const { x, y, width, height, value, style } = cellData;
+      
+      // Parse style
+      const shape = extractStyleAttribute(style, 'shape') || (style.includes('ellipse') ? 'ellipse' : (style.includes('rhombus') ? 'rhombus' : ''));
+      const fillColor = extractStyleAttribute(style, 'fillColor') || '#dae8fc';
+      const strokeColor = extractStyleAttribute(style, 'strokeColor') || '#6c8ebf';
+      const rounded = extractStyleAttribute(style, 'rounded') === '1';
+      const fontSize = parseInt(extractStyleAttribute(style, 'fontSize') || '12');
+      
+      // Draw based on shape
+      if (shape === 'ellipse' || shape === 'circle') {
+        // Draw ellipse
+        const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+        ellipse.setAttribute('cx', String(x + width / 2));
+        ellipse.setAttribute('cy', String(y + height / 2));
+        ellipse.setAttribute('rx', String(width / 2));
+        ellipse.setAttribute('ry', String(height / 2));
+        ellipse.setAttribute('fill', fillColor);
+        ellipse.setAttribute('stroke', strokeColor);
+        ellipse.setAttribute('stroke-width', '1.5');
+        svg.appendChild(ellipse);
+      } else if (shape === 'rhombus') {
+        // Draw diamond
+        const points = [
+          [x + width / 2, y],
+          [x + width, y + height / 2],
+          [x + width / 2, y + height],
+          [x, y + height / 2]
+        ];
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', points.map(p => p.join(',')).join(' '));
+        polygon.setAttribute('fill', fillColor);
+        polygon.setAttribute('stroke', strokeColor);
+        polygon.setAttribute('stroke-width', '1.5');
+        svg.appendChild(polygon);
+      } else {
+        // Draw rectangle (default)
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', String(x));
+        rect.setAttribute('y', String(y));
+        rect.setAttribute('width', String(width));
+        rect.setAttribute('height', String(height));
+        rect.setAttribute('fill', fillColor);
+        rect.setAttribute('stroke', strokeColor);
+        rect.setAttribute('stroke-width', '1.5');
+        if (rounded) {
+          rect.setAttribute('rx', '5');
+          rect.setAttribute('ry', '5');
+        }
+        svg.appendChild(rect);
+      }
+      
+      // Add text label
+      if (value) {
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', String(x + width / 2));
+        text.setAttribute('y', String(y + height / 2 + fontSize / 2));
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('font-size', String(fontSize));
+        text.setAttribute('font-family', 'Arial, sans-serif');
+        text.setAttribute('fill', '#000');
+        text.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'space', 'preserve');
+        text.textContent = value;
+        svg.appendChild(text);
+      }
+    }
+    
+    // Third pass: draw edges
+    for (const edge of edges) {
+      const sourceCell = cellMap.get(edge.source);
+      const targetCell = cellMap.get(edge.target);
+      
+      if (sourceCell && targetCell) {
+        const x1 = sourceCell.x + sourceCell.width / 2;
+        const y1 = sourceCell.y + sourceCell.height / 2;
+        const x2 = targetCell.x + targetCell.width / 2;
+        const y2 = targetCell.y + targetCell.height / 2;
+        
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', String(x1));
+        line.setAttribute('y1', String(y1));
+        line.setAttribute('x2', String(x2));
+        line.setAttribute('y2', String(y2));
+        line.setAttribute('stroke', '#666');
+        line.setAttribute('stroke-width', '1.5');
+        line.setAttribute('marker-end', 'url(#arrowhead)');
+        svg.appendChild(line);
+      }
+    }
+    
+    // Add arrow marker
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', 'arrowhead');
+    marker.setAttribute('markerWidth', '10');
+    marker.setAttribute('markerHeight', '10');
+    marker.setAttribute('refX', '5');
+    marker.setAttribute('refY', '3');
+    marker.setAttribute('orient', 'auto');
+    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    polygon.setAttribute('points', '0 0, 10 3, 0 6');
+    polygon.setAttribute('fill', '#666');
+    marker.appendChild(polygon);
+    defs.appendChild(marker);
+    svg.insertBefore(defs, svg.firstChild);
+    
+    return svg;
+  } catch (err) {
+    console.error('[DRAWIO] SVG rendering error:', err);
+    return null;
+  }
+}
+
+// Helper to extract style attributes
+function extractStyleAttribute(style: string, attr: string): string {
+  if (!style) return '';
+  const regex = new RegExp(`${attr}=([^;]+)`);
+  const match = style.match(regex);
+  return match ? match[1].replace(/^['"]|['"]$/g, '') : '';
+}
+
 function initializeEditor() {
   const container = document.getElementById('editor-container');
   if (!container) {
@@ -1550,17 +1870,23 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   }
   
   // Set the HTML — sanitize to prevent XSS from malicious markdown files.
-  // ADD_TAGS/ADD_ATTR allow MathJax (mjx-*) and Mermaid (svg, foreignObject) to survive.
+  // ADD_TAGS/ADD_ATTR allow MathJax (mjx-*), Mermaid (svg, foreignObject), and Draw.io (svg, defs, marker) to survive.
   contentDiv.innerHTML = DOMPurify.sanitize(html, {
     ADD_TAGS: ['mjx-container', 'mjx-math', 'mjx-mrow', 'mjx-mo', 'mjx-mi', 'mjx-mn',
                'mjx-msup', 'mjx-msub', 'mjx-msubsup', 'mjx-mfrac', 'mjx-sqrt',
                'mjx-mtext', 'mjx-mspace', 'mjx-merror', 'mjx-semantics',
                'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
                'mfrac', 'msqrt', 'mtext', 'mspace', 'semantics', 'annotation',
-               'foreignObject'],
+               'foreignObject', 'svg', 'defs', 'marker', 'polygon', 'ellipse',
+               'line', 'path', 'g', 'text', 'tspan', 'use'],
     ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
-               'xmlns', 'viewBox', 'preserveAspectRatio', 'focusable',
-               'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href'],
+               'xmlns', 'xmlns:xlink', 'viewBox', 'preserveAspectRatio', 'focusable',
+               'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href',
+               'data-drawio-xml', 'data-drawio-content', 'data-drawio-rendered',
+               'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r',
+               'width', 'height', 'points', 'fill', 'stroke', 'stroke-width',
+               'text-anchor', 'font-size', 'font-family', 'marker-end',
+               'markerWidth', 'markerHeight', 'refX', 'refY', 'orient'],
     FORCE_BODY: false,
   });
   // Tag raw markdown SVGs before MathJax runs so our responsive SVG CSS
@@ -1587,6 +1913,10 @@ async function renderTab(index: number, options: RenderOptions = {}) {
 
   // Process UML sequence diagrams (converted to Mermaid under the hood)
   await processUMLSequenceDiagrams(contentDiv);
+  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+
+  // Process Draw.io diagrams
+  await processDrawioDiagrams(contentDiv);
   if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
 
   // Typeset math with MathJax
@@ -1656,6 +1986,13 @@ async function waitForRenderingComplete(): Promise<void> {
   // These use Raphael.js which is synchronous, but give them a moment
   const umlElements = document.querySelectorAll('.sequence-diagram');
   if (umlElements.length > 0) {
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  // Wait for Draw.io diagrams to render (SVG-based, synchronous but give rendering time)
+  const drawioElements = document.querySelectorAll('.drawio-svg-container');
+  if (drawioElements.length > 0) {
+    // SVG rendering is synchronous, but give a moment for DOM updates
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   
