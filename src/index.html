@@ -12,45 +12,6 @@
       box-sizing: border-box;
     }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      transition: background-color 0.3s ease, color 0.3s ease, border 0.2s ease;
-    }
-
-    /* Drag and drop visual feedback */
-    body.drag-over {
-      border: 3px dashed #0e639c !important;
-      background-color: rgba(14, 99, 156, 0.05) !important;
-    }
-
-    body.drag-over::before {
-      content: "Drop Markdown files here";
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 24px;
-      font-weight: 600;
-      color: #0e639c;
-      background: rgba(255, 255, 255, 0.95);
-      padding: 24px 48px;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      pointer-events: none;
-      z-index: 10000;
-    }
-
-    .header {
-      display: flex;
-      align-items: center;
-      background: #252526;
-      border-bottom: 1px solid #3e3e42;
-      padding: 8px 12px;
-      gap: 16px;
-      flex-wrap: nowrap;
     }
     #status-indicator {
       margin-left: auto;
@@ -598,14 +559,16 @@
       width: 100%;
     }
 
-    .drawio-svg-container svg {
+    .drawio-svg-container svg,
+    .drawio-svg-container img {
       max-width: 100%;
       height: auto;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
       border-radius: 4px;
     }
 
-    .drawio-svg-container svg:hover {
+    .drawio-svg-container svg:hover,
+    .drawio-svg-container img:hover {
       box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
     }
 

@@ -1280,42 +1280,6 @@ async function processDrawioDiagrams(container: HTMLElement) {
     // Store the XML in a data attribute for later access/export
     diagramDiv.setAttribute('data-drawio-content', xmlContent);
     
-    // Create a toolbar for diagram actions
-    const toolbar = document.createElement('div');
-    toolbar.className = 'drawio-toolbar';
-    
-    // Add "Open in Draw.io" button
-    const openButton = document.createElement('button');
-    openButton.className = 'drawio-action-btn';
-    openButton.textContent = '✎ Edit in Draw.io';
-    openButton.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // Encode the XML for use in draw.io URL
-      const encoded = btoa(xmlContent);
-      const drawioUrl = `https://app.diagrams.net/?splash=0&mode=browser#H${encoded}`;
-      window.open(drawioUrl, '_blank');
-    };
-    toolbar.appendChild(openButton);
-    
-    // Add copy button
-    const copyButton = document.createElement('button');
-    copyButton.className = 'drawio-action-btn';
-    copyButton.textContent = '📋 Copy XML';
-    copyButton.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      navigator.clipboard.writeText(xmlContent).then(() => {
-        copyButton.textContent = '✓ Copied!';
-        setTimeout(() => {
-          copyButton.textContent = '📋 Copy XML';
-        }, 2000);
-      });
-    };
-    toolbar.appendChild(copyButton);
-    
-    diagramDiv.appendChild(toolbar);
-    
     // Create SVG container
     const svgContainer = document.createElement('div');
     svgContainer.className = 'drawio-svg-container';
@@ -1338,9 +1302,9 @@ async function processDrawioDiagrams(container: HTMLElement) {
       if (!svgContainer) continue;
       
       // Parse and render the draw.io diagram using diagrams.net engine first
-      const svg = await renderDrawioDiagramToSVG(xmlContent);
-      if (svg) {
-        svgContainer.appendChild(svg);
+      const rendered = await renderDrawioDiagramToSVG(xmlContent);
+      if (rendered) {
+        svgContainer.appendChild(rendered);
       } else {
         svgContainer.textContent = 'Error rendering diagram';
         svgContainer.style.color = '#f44747';
@@ -1385,10 +1349,22 @@ function parseSvgDataUri(dataUri: string): SVGElement | null {
   }
 }
 
-async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<SVGElement | null> {
+function createDrawioImageElement(dataUri: string): HTMLImageElement {
+  const img = document.createElement('img');
+  img.src = dataUri;
+  img.alt = 'Draw.io diagram';
+  img.style.maxWidth = '100%';
+  img.style.height = 'auto';
+  img.style.border = '1px solid #e0e0e0';
+  img.style.borderRadius = '4px';
+  img.style.backgroundColor = '#ffffff';
+  return img;
+}
+
+async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<Element | null> {
   const cached = drawioSvgCache.get(xmlContent);
   if (cached) {
-    return parseSvgDataUri(cached);
+    return createDrawioImageElement(cached);
   }
 
   return new Promise((resolve) => {
@@ -1456,19 +1432,12 @@ async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<SVG
       }
 
       if (msg.event === 'export' && typeof msg.data === 'string') {
-        const svg = parseSvgDataUri(msg.data);
-        if (svg) {
-          drawioSvgCache.set(xmlContent, msg.data);
-          svg.style.border = '1px solid #e0e0e0';
-          svg.style.borderRadius = '4px';
-          svg.style.backgroundColor = '#ffffff';
-          svg.style.maxWidth = '100%';
-          svg.style.height = 'auto';
-        }
+        drawioSvgCache.set(xmlContent, msg.data);
+        const rendered = createDrawioImageElement(msg.data);
         if (!settled) {
           settled = true;
           cleanup();
-          resolve(svg);
+          resolve(rendered);
         }
         return;
       }
@@ -1488,10 +1457,10 @@ async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<SVG
 }
 
 // Primary draw.io renderer: official diagrams.net export path with local fallback
-async function renderDrawioDiagramToSVG(xmlContent: string): Promise<SVGElement | null> {
-  const officialSvg = await renderDrawioDiagramToSVGViaEmbed(xmlContent);
-  if (officialSvg) {
-    return officialSvg;
+async function renderDrawioDiagramToSVG(xmlContent: string): Promise<Element | null> {
+  const officialRendered = await renderDrawioDiagramToSVGViaEmbed(xmlContent);
+  if (officialRendered) {
+    return officialRendered;
   }
   return renderDrawioDiagramToSVGLegacy(xmlContent);
 }
