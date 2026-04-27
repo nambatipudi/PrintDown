@@ -1508,9 +1508,13 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
         text.setAttribute('pointer-events', 'none');
         text.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'space', 'preserve');
         
-        // Add text - use single line for simplicity
+      // Add text - use single line for simplicity
         // Text wrapping would require more complex measurement
-        text.textContent = value.trim();
+        // Decode HTML entities in text values
+        let textContent = value.trim();
+        // Replace common HTML entities
+        textContent = textContent.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'");
+        text.textContent = textContent;
         
         svg.appendChild(text);
       }
