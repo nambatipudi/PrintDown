@@ -1424,51 +1424,82 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
     svg.appendChild(bg);
     
     const cells = root.getElementsByTagName('mxCell');
-    const edges: Array<{ source: string; target: string }> = [];
+    interface EdgeData { source: string; target: string; style: string; waypoints: Array<{x:number,y:number}>; label: string; }
+    const edges: Array<EdgeData> = [];
     const cellMap = new Map<string, any>();
+    // Track which cell IDs are edges (so we can skip their label children)
+    const edgeIds = new Set<string>();
     
-    // First pass: extract cells (vertices)
+    // First pass: extract cells (vertices only - skip edges and edge labels)
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const id = cell.getAttribute('id');
       if (!id || id === '0' || id === '1') continue;
       
+      const edge = cell.getAttribute('edge') === '1';
+      const connectable = cell.getAttribute('connectable');
+      const parent = cell.getAttribute('parent');
+      
+      // Skip edge label cells (connectable=0 whose parent is an edge)
+      if (connectable === '0') continue;
+      
+      if (edge) {
+        edgeIds.add(id);
+        const source = cell.getAttribute('source');
+        const target = cell.getAttribute('target');
+        if (source && target) {
+          // Extract waypoints from mxGeometry/Array/mxPoint
+          const waypoints: Array<{x:number,y:number}> = [];
+          const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
+          if (mxGeom) {
+            const pts = mxGeom.getElementsByTagName('mxPoint');
+            for (let j = 0; j < pts.length; j++) {
+              const px = parseFloat(pts[j].getAttribute('x') || '0');
+              const py = parseFloat(pts[j].getAttribute('y') || '0');
+              waypoints.push({ x: px, y: py });
+            }
+          }
+          // Extract edge label from child edgeLabel cells
+          let label = '';
+          for (let j = 0; j < cells.length; j++) {
+            const lc = cells[j];
+            if (lc.getAttribute('parent') === id && lc.getAttribute('connectable') === '0') {
+              label = lc.getAttribute('value') || '';
+              break;
+            }
+          }
+          const edgeStyle = cell.getAttribute('style') || '';
+          edges.push({ source, target, style: edgeStyle, waypoints, label });
+        }
+        continue;
+      }
+      
       const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
       if (!mxGeom) continue;
+      // Skip relative geometry (edge labels have relative="1" and no real coords)
+      if (mxGeom.getAttribute('relative') === '1') continue;
       
       const x = parseFloat(mxGeom.getAttribute('x') || '0');
       const y = parseFloat(mxGeom.getAttribute('y') || '0');
       const width = parseFloat(mxGeom.getAttribute('width') || '100');
       const height = parseFloat(mxGeom.getAttribute('height') || '100');
+      // Skip zero-size cells
+      if (width === 0 && height === 0) continue;
       const value = cell.getAttribute('value') || '';
       const style = cell.getAttribute('style') || '';
-      const vertex = cell.getAttribute('vertex') === '1';
-      const edge = cell.getAttribute('edge') === '1';
       
-      if (edge) {
-        const source = cell.getAttribute('source');
-        const target = cell.getAttribute('target');
-        if (source && target) {
-          edges.push({ source, target });
-        }
-      }
-      
-      cellMap.set(id, { x, y, width, height, value, style, vertex, edge });
+      cellMap.set(id, { x, y, width, height, value, style });
     }
     
-    // Second pass: draw cells
-    const renderedIds = new Set<string>(); // Track already-rendered cells to prevent duplicates
+    // Second pass: draw vertex cells
+    const renderedIds = new Set<string>();
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
       const id = cell.getAttribute('id');
       if (!id) continue;
-      
-      // Skip if already rendered
       if (renderedIds.has(id)) continue;
-      
       const cellData = cellMap.get(id);
       if (!cellData) continue;
-      
       renderedIds.add(id);
       
       // Apply offset to translate content into view
@@ -1611,44 +1642,115 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       }
     }
     
-    // Third pass: draw edges
+    // Third pass: draw edges with orthogonal routing
+    // Build unique marker ids per color to avoid conflicts
+    const markerColors = new Map<string, string>();
+    const defsEl = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+
+    const getMarkerId = (color: string, open: boolean) => {
+      const key = color + (open ? '-open' : '-filled');
+      if (!markerColors.has(key)) {
+        markerColors.set(key, key.replace(/[^a-zA-Z0-9]/g, '_'));
+        const mk = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        const mkId = 'arrow_' + markerColors.get(key);
+        mk.setAttribute('id', mkId);
+        mk.setAttribute('markerWidth', '8');
+        mk.setAttribute('markerHeight', '8');
+        mk.setAttribute('refX', open ? '6' : '5');
+        mk.setAttribute('refY', '3');
+        mk.setAttribute('orient', 'auto');
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        if (open) {
+          // Open arrow: just two lines (use polyline)
+          const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+          pl.setAttribute('points', '0,0 6,3 0,6');
+          pl.setAttribute('fill', 'none');
+          pl.setAttribute('stroke', color);
+          pl.setAttribute('stroke-width', '1.5');
+          mk.appendChild(pl);
+        } else {
+          poly.setAttribute('points', '0 0, 8 3, 0 6');
+          poly.setAttribute('fill', color);
+          mk.appendChild(poly);
+        }
+        defsEl.appendChild(mk);
+      }
+      return 'arrow_' + markerColors.get(key);
+    };
+
     for (const edge of edges) {
       const sourceCell = cellMap.get(edge.source);
       const targetCell = cellMap.get(edge.target);
-      
-      if (sourceCell && targetCell) {
-        const x1 = sourceCell.x + offsetX + sourceCell.width / 2;
-        const y1 = sourceCell.y + offsetY + sourceCell.height / 2;
-        const x2 = targetCell.x + offsetX + targetCell.width / 2;
-        const y2 = targetCell.y + offsetY + targetCell.height / 2;
-        
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', String(x1));
-        line.setAttribute('y1', String(y1));
-        line.setAttribute('x2', String(x2));
-        line.setAttribute('y2', String(y2));
-        line.setAttribute('stroke', '#666');
-        line.setAttribute('stroke-width', '1.5');
-        line.setAttribute('marker-end', 'url(#arrowhead)');
-        svg.appendChild(line);
+      if (!sourceCell || !targetCell) continue;
+
+      const strokeColor = extractStyleAttribute(edge.style, 'strokeColor') ||
+                          extractStyleAttribute(edge.style, 'stroke') || '#666666';
+      const strokeWidth = extractStyleAttribute(edge.style, 'strokeWidth') || '1.5';
+      const dashed = edge.style.includes('dashed=1') || edge.style.includes('dashed');
+      const openArrow = edge.style.includes('endArrow=open') || edge.style.includes('endFill=0');
+      const noArrow = edge.style.includes('endArrow=none');
+
+      // Build path points: source center → waypoints → target center
+      const sx = sourceCell.x + offsetX + sourceCell.width / 2;
+      const sy = sourceCell.y + offsetY + sourceCell.height / 2;
+      const tx = targetCell.x + offsetX + targetCell.width / 2;
+      const ty = targetCell.y + offsetY + targetCell.height / 2;
+
+      let pts: Array<{x:number,y:number}>;
+      if (edge.waypoints.length > 0) {
+        pts = [
+          { x: sx, y: sy },
+          ...edge.waypoints.map(p => ({ x: p.x + offsetX, y: p.y + offsetY })),
+          { x: tx, y: ty }
+        ];
+      } else {
+        pts = [{ x: sx, y: sy }, { x: tx, y: ty }];
+      }
+
+      // Build SVG path
+      let d = `M ${pts[0].x} ${pts[0].y}`;
+      for (let j = 1; j < pts.length; j++) {
+        d += ` L ${pts[j].x} ${pts[j].y}`;
+      }
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', strokeColor);
+      path.setAttribute('stroke-width', strokeWidth);
+      if (dashed) path.setAttribute('stroke-dasharray', '5,4');
+      if (!noArrow) path.setAttribute('marker-end', `url(#${getMarkerId(strokeColor, openArrow)})`);
+      svg.appendChild(path);
+
+      // Draw edge label if present
+      if (edge.label && edge.label.trim()) {
+        const midIdx = Math.floor(pts.length / 2);
+        const lx = (pts[midIdx-1].x + pts[midIdx].x) / 2;
+        const ly = (pts[midIdx-1].y + pts[midIdx].y) / 2;
+        const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        lbl.setAttribute('x', String(lx));
+        lbl.setAttribute('y', String(ly - 4));
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.setAttribute('font-size', '10');
+        lbl.setAttribute('font-family', 'Arial, sans-serif');
+        lbl.setAttribute('fill', '#333333');
+        lbl.setAttribute('pointer-events', 'none');
+        // White background rect for readability
+        const bbox_w = edge.label.length * 5.5;
+        const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        bgRect.setAttribute('x', String(lx - bbox_w / 2));
+        bgRect.setAttribute('y', String(ly - 16));
+        bgRect.setAttribute('width', String(bbox_w));
+        bgRect.setAttribute('height', '12');
+        bgRect.setAttribute('fill', 'white');
+        bgRect.setAttribute('fill-opacity', '0.85');
+        svg.appendChild(bgRect);
+        lbl.textContent = edge.label;
+        svg.appendChild(lbl);
       }
     }
-    
-    // Add arrow marker
-    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.setAttribute('id', 'arrowhead');
-    marker.setAttribute('markerWidth', '10');
-    marker.setAttribute('markerHeight', '10');
-    marker.setAttribute('refX', '5');
-    marker.setAttribute('refY', '3');
-    marker.setAttribute('orient', 'auto');
-    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    polygon.setAttribute('points', '0 0, 10 3, 0 6');
-    polygon.setAttribute('fill', '#666');
-    marker.appendChild(polygon);
-    defs.appendChild(marker);
-    svg.insertBefore(defs, svg.firstChild);
+
+    svg.insertBefore(defsEl, svg.firstChild);
     
     return svg;
   } catch (err) {
@@ -1981,15 +2083,15 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'mjx-mtext', 'mjx-mspace', 'mjx-merror', 'mjx-semantics',
                'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
                'mfrac', 'msqrt', 'mtext', 'mspace', 'semantics', 'annotation',
-               'foreignObject', 'svg', 'defs', 'marker', 'polygon', 'ellipse',
+               'foreignObject', 'svg', 'defs', 'marker', 'polygon', 'polyline', 'ellipse',
                'line', 'path', 'g', 'text', 'tspan', 'use'],
     ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
                'xmlns', 'xmlns:xlink', 'viewBox', 'preserveAspectRatio', 'focusable',
                'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href',
                'data-drawio-xml', 'data-drawio-content', 'data-drawio-rendered',
-               'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r',
+               'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r', 'd',
                'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width',
-               'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
+               'stroke-dasharray', 'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
                'markerWidth', 'markerHeight', 'refX', 'refY', 'orient'],
     FORCE_BODY: false,
   });
