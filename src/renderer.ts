@@ -1493,16 +1493,54 @@ function renderDrawioDiagramToSVG(xmlContent: string): SVGElement | null {
       }
       
       // Add text label
-      if (value) {
+      if (value && value.trim()) {
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', String(x + width / 2));
-        text.setAttribute('y', String(y + height / 2 + fontSize / 2));
+        text.setAttribute('y', String(y + height / 2));
         text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'middle');
         text.setAttribute('font-size', String(fontSize));
         text.setAttribute('font-family', 'Arial, sans-serif');
         text.setAttribute('fill', '#000');
+        text.setAttribute('pointer-events', 'none');
         text.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'space', 'preserve');
-        text.textContent = value;
+        
+        // Handle text wrapping for long content
+        const trimmedValue = value.trim();
+        if (trimmedValue.length > 30) {
+          // Split long text into multiple lines
+          const words = trimmedValue.split(/\s+/);
+          let currentLine = '';
+          let lineCount = 0;
+          
+          words.forEach((word: string, idx: number) => {
+            const testLine = currentLine ? currentLine + ' ' + word : word;
+            if (testLine.length > 15 && currentLine) {
+              // Create tspan for current line
+              const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+              tspan.setAttribute('x', String(x + width / 2));
+              tspan.setAttribute('dy', lineCount === 0 ? '0' : String(fontSize + 2));
+              tspan.textContent = currentLine;
+              text.appendChild(tspan);
+              currentLine = word;
+              lineCount++;
+            } else {
+              currentLine = testLine;
+            }
+          });
+          
+          // Add final line
+          if (currentLine) {
+            const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+            tspan.setAttribute('x', String(x + width / 2));
+            tspan.setAttribute('dy', lineCount === 0 ? '0' : String(fontSize + 2));
+            tspan.textContent = currentLine;
+            text.appendChild(tspan);
+          }
+        } else {
+          text.textContent = trimmedValue;
+        }
+        
         svg.appendChild(text);
       }
     }
