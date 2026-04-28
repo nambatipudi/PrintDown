@@ -10,6 +10,36 @@ interface SessionData {
   fontSizeFactor?: number;
 }
 
+// Playwright test harness. When running under Playwright (executablePath to the packaged
+// binary), loader.js is not loaded as a preload, so we set up __playwright_run here.
+// We use appendSwitch (not CLI args) so Chromium gets remote-debugging-port correctly.
+// We also use a unique userData dir per test process to avoid SingletonLock conflicts.
+if (process.env.PLAYWRIGHT_TEST === '1') {
+  const os = require('os') as typeof import('os');
+  const _pwTestDir = process.env.PLAYWRIGHT_TEST_USERDATA
+    || path.join(os.tmpdir(), `printdown-test-${process.pid}`);
+  require('fs').mkdirSync(_pwTestDir, { recursive: true });
+  app.setPath('userData', _pwTestDir);
+  app.commandLine.appendSwitch('remote-debugging-port', '0');
+
+  const _pwOriginalWhenReady = app.whenReady();
+  const _pwOriginalEmit = (app as any).emit.bind(app);
+  let _pwReadyArgs: unknown[] = [];
+  (app as any).emit = (event: string, ...args: unknown[]) => {
+    if (event === 'ready') { _pwReadyArgs = args; return app.listenerCount('ready') > 0; }
+    return _pwOriginalEmit(event, ...args);
+  };
+  let _pwReadyCb: ((v: unknown) => void) | undefined;
+  const _pwReadyPromise = new Promise<unknown>(resolve => { _pwReadyCb = resolve; });
+  (app as any).whenReady = () => _pwReadyPromise;
+  (app as any).isReady = () => false;
+  (globalThis as any).__playwright_run = async () => {
+    const event = await _pwOriginalWhenReady;
+    _pwReadyCb!(event);
+    _pwOriginalEmit('ready', ..._pwReadyArgs);
+  };
+}
+
 // Set app name before anything else so macOS menu bar shows "Print Down"
 app.name = 'Print Down';
 

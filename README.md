@@ -1,360 +1,190 @@
 # PrintDown
 
-Feature-rich Markdown viewer and PDF exporter built with Electron.
+A focused Markdown viewer and PDF exporter for desktop. Open `.md` files, read them beautifully, navigate with a table of contents, and export clean PDFs — all offline.
+
+---
 
 ## Screenshots
 
-### Mermaid Diagrams & Math Support
-![Gantt Chart, Git Graph, and Math Equations](./docs/screenshots/diagrams-math.png)
-*Render Gantt charts, Git graphs, and mathematical equations seamlessly in your Markdown documents*
+![Diagrams and Math](./docs/screenshots/diagrams-math.png)
+*Mermaid diagrams, Gantt charts, and MathJax equations side-by-side*
 
-### Mermaid Sequence Diagrams
-![Mermaid Sequence Diagrams](./docs/screenshots/sequence-diagrams.png)
-*Create professional sequence diagrams showing user authentication flows and API interactions*
+![Multiple Themes](./docs/screenshots/themes.png)
+*22 themes including print-optimized layouts*
 
-### Multiple Themes
-![Theme Selection](./docs/screenshots/themes.png)
-*Choose from 16+ beautiful themes including Dark, Light, Academic, and more*
+![Table of Contents](./docs/screenshots/toc.png)
+*Collapsible TOC sidebar with active heading tracking*
 
-## Features
+![Edit Mode](./docs/screenshots/edit.png)
+*Split-pane edit mode with live preview*
 
-### Markdown Support
-- Live preview of Markdown files
-- Support for CommonMark and GitHub Flavored Markdown
-- Multiple file tabs for easy switching between documents
-- **NEW: Table of Contents (TOC) Sidebar** - Navigate long documents with collapsible heading tree
-
-### Navigation & Interface
-- **Collapsible TOC Sidebar** - Click the ☰ hamburger button to toggle
-- **Smart heading navigation** - Click any heading in TOC to scroll smoothly
-- **Active section highlighting** - Current section highlighted in TOC
-- **Tab scrolling** (NEW) - Left/right scroll buttons (‹ ›) for many open tabs
-- **Keyboard shortcuts** - Ctrl/Cmd + \ to toggle TOC
-- **Right-click tab context menu** - Close, Close Others, Close All options
-- **Enhanced drag & drop** - Visual feedback and multi-file support with drop zones
-
-### Customizable Themes
-Choose from **22 beautiful themes** including 6 print-optimized options:
-
-**General Use Themes (16)**:
-- `dark`, `light`, `sepia`, `nord`, `dracula`, `solarized-light`
-- `github`, `monokai`, `literary`, `terminal`, `oceanic`, `newspaper`
-- `cyberpunk`, `forest`, `minimal`, `academic`
-
-**Print-Optimized Themes (6)** - Professional layouts for PDF export:
-- `print-classic` - Traditional serif with warm tones
-- `print-modern` - Clean sans-serif with blue accents
-- `print-elegant` - Refined purple palette with Palatino
-- `print-technical` - Technical documentation with green accents
-- `print-report` - Professional reports with gold highlights
-- `print-minimalist` - Minimalist red accents
-
-### Math Equations
-Full support for mathematical notation using **MathJax 3** *(see first screenshot above)*:
-- **Inline math**: `$E = mc^2$` renders as $E = mc^2$
-- **Display math**: Complex integrals like `$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$`
-- LaTeX commands and symbols
-- Chemistry equations with mhchem
-- Automatic rendering in both light and dark themes
-
-### Diagrams
-Render complex diagrams directly in your Markdown with full customization:
-
-**Mermaid Diagrams** *(see screenshots above)*:
-- **Flowcharts** - Decision trees and process flows
-- **Sequence diagrams** - User authentication, API interactions
-- **Class diagrams** - UML class structures
-- **State diagrams** - State machines
-- **Gantt charts** - Project timelines and schedules
-- **Git graphs** - Repository branch visualization
-- **Pie charts** - Data visualization
-
-**Diagram Customization** (NEW in v1.7.0):
-- **Resizable** - Drag the resize handle at bottom-right corner
-- **Repositionable** - Drag the top handle (⋮⋮) to align left/center/right
-- **Theme-Aware** - Diagrams automatically match all 22 PrintDown themes
-- **Persistent Settings** - Size and position saved per diagram
-- **Double-click to Reset** - Quickly restore original size and position
-- **PDF-Ready** - Handles hidden in PDF exports for clean output
-
-### Font Size Control
-- Adjustable font size with +/- buttons
-- Smooth scaling from 50% to 200%
-- Reset button to return to default
-- Persistent across sessions and respected by PDF export
-
-### Image & SVG Support
-- **Multiple image formats**: PNG, JPG, GIF, WebP, and **SVG**
-- **External SVG files**: Reference SVG files using `![alt](image.svg)` syntax
-- **Inline SVG**: Embed SVG code directly in your Markdown (HTML support enabled)
-- **Per-image resizing**: Hover to see handle, drag to resize, double-click to reset
-- **Repositionable images** (NEW): Drag the top handle (⋮⋮) to align left/center/right
-- **Aspect ratio preservation**: Images maintain proportions when resized
-- **Persistent settings**: Sizes and positions persist per file and are honored by PDF export
-
-### PDF Export
-Export your Markdown to PDFs:
-
-### Performance & Reliability
-- **Completely offline** - No CDN dependencies, works without internet
-- **Local vendor scripts** - MathJax, Mermaid, and all libraries bundled locally
-- **System fonts** - Uses high-quality system fonts (no Google Fonts dependency)
-- **Electron 39** - Latest Electron with modern security and performance
-- **File watching** - Automatically detects external changes to open files
-- **Zero vulnerabilities** - All dependencies updated and security issues resolved
-
-### Session Management
-- Automatically saves open files
-- Restores tabs on app restart
-- Remembers theme and font size preferences
-- **TOC state persistence** - Remembers if sidebar was open/closed
-- **File watching** - Detects external changes to open files and prompts to reload
-- **Visual customization persistence** - Saves image/diagram sizes and positions per file
-
-## What's New in v1.7.1 🎉
-
-### Latest Updates (v1.7.0 - v1.7.1):
-- **📐 Resizable & Repositionable Diagrams** - Resize and reposition Mermaid diagrams just like images
-- **🎨 Enhanced Mermaid Theming** - Diagrams now match all 22 PrintDown theme colors automatically
-- **🗂️ Tab Scrolling** - Navigate many open tabs with left/right scroll buttons (‹ ›)
-- **🔧 Drag-Drop Improvements** - Enhanced visual feedback and better multi-file support
-- **🧹 Performance Optimizations** - Cleaned up debug logging for faster rendering
-
-### Recent Additions (v1.4.0 - v1.6.0):
-- **🖨️ Print-Friendly Themes** - 6 new themes optimized for PDF export: `print-classic`, `print-modern`, `print-elegant`, `print-technical`, `print-report`, `print-minimalist`
-- **📄 Enhanced PDF Export** - Fixed truncation issues, hidden TOC from PDFs, improved generation performance
-- **➕ Improved Math Rendering** - Better support for inline math with spaces (e.g., `$ (a + b) $`)
-- **📚 Markdown-it Migration** - Switched from marked.js to markdown-it with texmath plugin for better math rendering
-- **⬆️ Latest Dependencies** - Electron 39, Mermaid 11.12.1, Webpack 5.102.1, all security vulnerabilities fixed
-- **🔒 Security Enhancements** - Added CSP headers and improved error handling
-
-### Foundation (v1.3.0):
-- **🧭 Table of Contents Sidebar** - Navigate long documents with collapsible heading tree
-- **⚡ Completely Offline** - Removed all CDN dependencies for true offline functionality
-- **🔧 Enhanced UI** - Moved font/theme controls to main menu for cleaner interface
-- **🖱️ Tab Context Menu** - Right-click tabs for Close, Close Others, Close All options
-- **📝 Per-Image Resizing** - Resize individual images with drag handles and aspect ratio preservation
-
-### Technical Improvements:
-- Local vendor scripts (MathJax, Mermaid, Raphael, Underscore)
-- System font stacks instead of Google Fonts
-- Enhanced session restoration with file watching
-- Improved drag & drop handling with visual feedback
-- Better error handling and debugging
-- VS Code debug configurations included
+---
 
 ## Installation
 
-Download the latest installer from the [Releases](https://github.com/nambatipudi/PrintDown/releases) page:
+Download from the [Releases](https://github.com/nambatipudi/PrintDown/releases) page:
 
-- **Windows**: `PrintDown-Setup-x.x.x.exe` - Run the installer and follow the wizard
-- **macOS**: `PrintDown-x.x.x.dmg` - Open DMG and drag to Applications folder ([detailed guide](MACOS_INSTALLATION.md))
-- **Linux**: `PrintDown-x.x.x.AppImage` - Make executable and run
+| Platform | File |
+|----------|------|
+| macOS | `PrintDown-x.x.x-mac-arm64.dmg` — open and drag to Applications |
+| Windows | `PrintDown-Setup-x.x.x.exe` — run the installer |
+| Linux | `PrintDown-x.x.x.AppImage` — make executable and run |
 
-### Quick Start
-1. Download the appropriate installer for your platform
-2. Install (drag to Applications on macOS, run installer on Windows)
-3. Launch PrintDown
-4. Drag and drop your `.md` files or use File → Open
+---
 
+## Opening Files
 
-## Usage
+- **Drag and drop** one or more `.md` files onto the window
+- **File → Open...** (`Cmd/Ctrl+O`) to browse
+- **Double-click** a `.md` file if you set up the file association during install
 
-### Opening Files
+Multiple files open as tabs. Tabs can be scrolled with the `‹` `›` buttons when there are many. Right-click any tab for **Close**, **Close Others**, or **Close All**.
 
-PrintDown offers multiple convenient ways to open Markdown files:
+---
 
-1. **Drag and Drop** 
-   - Simply drag `.md` or `.markdown` files from your file explorer
-   - Drop them anywhere on the PrintDown window
-   - Multiple files can be dropped at once (opens in separate tabs)
-   - Visual feedback shows when files are ready to drop
+## Features
 
-2. **File Menu** (Ctrl/Cmd + O)
-   - Click **File → Open**
-   - Browse and select your Markdown file
-   - Supports `.md` and `.markdown` extensions
+### Table of Contents
 
-3. **Double-Click** (optional)
-   - If you enabled file association during installation
-   - Double-click any `.md` file in your file explorer
-   - Opens directly in PrintDown
+Click the **☰** button (top-left) or press `Cmd/Ctrl+\` to toggle the TOC sidebar. The sidebar lists every heading in the document — click one to scroll there instantly. The active section is highlighted as you scroll.
 
-4. **Command Line**
-   - Launch with a file: `printdown myfile.md`
-   - Opens the specified file on startup
+### Edit Mode
 
-### Adjusting Font Size
-- Click **-** button to decrease
-- Click **⟲** button to reset to default
-- Click **+** button to increase
+Click the **✎** button (or use the toolbar) to split the window into an editor on the left and a live preview on the right. The preview updates as you type. Drag the splitter to adjust the ratio.
 
-### Resizing & Positioning Images and Diagrams
-- **Resize**: Hover to reveal resize handle at bottom-right corner, drag to resize (aspect ratio preserved)
-- **Reposition**: Hover to reveal drag handle (⋮⋮) at top, drag to align left/center/right
-- **Reset**: Double-click to restore original size and position
-- **Persistent**: Your choices are remembered per file and used during PDF export
-- **Works for**: Both images (PNG, JPG, SVG, etc.) and Mermaid diagrams
+### Themes
 
-### Using Table of Contents (NEW!)
-- Click the **☰ hamburger button** (top-left) to open/close TOC sidebar
-- Or use **View → Toggle Table of Contents** from the menu
-- Or press **Ctrl/Cmd + \\** keyboard shortcut
-- Click any heading in the TOC to navigate smoothly to that section
-- Current section is highlighted automatically as you scroll
+**View → Theme** offers 22 themes:
 
-### Changing Themes
-Use **View → Theme** from the menu to choose from 16+ beautiful themes.
+| General use | Print-optimized |
+|-------------|-----------------|
+| Dark, Light, Sepia, Nord | Print Classic |
+| Dracula, Monokai, GitHub | Print Modern |
+| Oceanic, Terminal, Forest | Print Elegant |
+| Literary, Newspaper, Academic | Print Technical |
+| Minimal, Cyberpunk, Solarized Light | Print Report |
+| | Print Minimalist |
 
-### Exporting to PDF
-- **File → Export to PDF** (Ctrl/Cmd + E)
-- Choose save location
-- PDF will be generated with current theme and font size
+The six print-optimized themes are designed for clean PDF output with professional typography.
 
-### Printing
-- **File → Print** (Ctrl/Cmd + P)
-- Use system print dialog
-- Can save as PDF via print dialog
+### Font Size
 
-## Keyboard Shortcuts
+**View → Font Size** or keyboard shortcuts:
 
 | Action | Shortcut |
 |--------|----------|
-| Open File | `Ctrl/Cmd + O` |
-| Print | `Ctrl/Cmd + P` |
-| Export to PDF | `Ctrl/Cmd + E` |
-| **Toggle TOC Sidebar** | `Ctrl/Cmd + \` |
-| **Increase Font Size** | Available in View menu |
-| **Decrease Font Size** | Available in View menu |
-| **Reset Font Size** | Available in View menu |
-| Exit | `Ctrl/Cmd + Q` |
+| Increase | `Cmd/Ctrl+=` |
+| Decrease | `Cmd/Ctrl+-` |
+| Reset | `Cmd/Ctrl+0` |
 
-## Why PrintDown (vs. VS Code Preview)
+Font size persists across sessions and is applied to PDF exports.
 
-- **Professional Navigation**: Built-in Table of Contents sidebar with smooth scrolling and active section highlighting
-- **Better Math Rendering**: Enhanced MathJax pipeline with markdown-it-texmath for improved parenthetical expressions and consistent spacing
-- **Visual Customization**: Resize AND reposition images and Mermaid diagrams with drag handles. Settings persist and apply to PDF output
-- **Enhanced Diagrams**: Built-in Mermaid support with automatic theme matching across 22 themes; no extensions required
-- **Print & Export**: First-class PDF export with 6 print-optimized themes, respecting all visual customizations and font sizes
-- **Tabs & Management**: Multi-tab viewer with scrolling navigation and right-click context menu (Close, Close Others, Close All)
-- **Completely Offline**: Zero CDN dependencies - works without internet connection
-- **Modern Architecture**: Electron 39 with latest security features, zero vulnerabilities, and file watching
-- **Performance & Focus**: A dedicated viewer focused on reading/printing Markdown with less editor overhead
+### Math Equations
 
-## SVG Support
+Write LaTeX inline with `$...$` or display with `$$...$$`:
 
-PrintDown fully supports SVG (Scalable Vector Graphics) in two ways:
-
-### 1. External SVG Files
-Reference SVG files using standard Markdown image syntax:
 ```markdown
-![My Icon](./images/icon.svg)
+Inline: $E = mc^2$
+
+Display:
+$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$
 ```
 
-### 2. Inline SVG (Raw HTML)
-Embed SVG code directly in your Markdown:
-```markdown
-<svg width="100" height="100">
-  <circle cx="50" cy="50" r="40" fill="#4CAF50" />
-</svg>
-```
+Rendered by MathJax 3, fully offline.
 
-See `Test_Files/SVG_Support_Test.md` for comprehensive examples including:
-- External SVG file loading
-- Inline SVG with gradients
-- Animated SVG
-- Data URI SVG
+### Mermaid Diagrams
 
-## Markdown Examples
+Use a `mermaid` fenced code block for flowcharts, sequence diagrams, class diagrams, state diagrams, Gantt charts, Git graphs, and pie charts:
 
-### Math Example
-```markdown
-Inline math: $E = mc^2$
-
-Display math:
-$$
-\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}
-$$
-```
-
-### Mermaid Diagram Example
 ````markdown
 ```mermaid
 graph TD
-    A[Start] --> B{Is it?}
-    B -->|Yes| C[OK]
-    B -->|No| D[End]
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Done]
+    B -->|No| A
 ```
 ````
 
-### UML Sequence Diagram Example
-````markdown
-```uml-sequence-diagram
-Alice->Bob: Hello Bob, how are you?
-Note right of Bob: Bob thinks
-Bob-->Alice: I am good thanks!
-```
-````
+Diagrams match the active theme automatically.
 
-### Draw.io Diagram Example
+### Draw.io Diagrams
 
-PrintDown now supports embedded Draw.io XML diagrams. You can draw professional diagrams in draw.io and embed them directly in your markdown files:
+Paste the XML from [diagrams.net](https://app.diagrams.net) into an `xml` fenced code block:
 
 ````markdown
 ```xml
-<mxGraphModel dx="800" dy="600" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+<mxGraphModel>
   <root>
-    <mxCell id="0"/>
-    <mxCell id="1" parent="0"/>
-    <mxCell id="2" value="Start" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-      <mxGeometry x="350" y="20" width="80" height="80" as="geometry"/>
+    <mxCell id="0"/><mxCell id="1" parent="0"/>
+    <mxCell id="2" value="Hello" style="rounded=1;" vertex="1" parent="1">
+      <mxGeometry x="100" y="100" width="120" height="60" as="geometry"/>
     </mxCell>
-    <!-- ... more diagram elements ... -->
   </root>
 </mxGraphModel>
 ```
 ````
 
-**Features:**
-- Automatic SVG rendering of Draw.io XML diagrams (no external dependencies required)
-- Real-time visualization of flowcharts, architecture diagrams, and more
-- "✎ Edit in Draw.io" button to open diagrams in the online editor
-- "📋 Copy XML" button to copy diagram content
-- Full PDF export support with proper SVG embedding
+PrintDown renders it as SVG inline — no external service needed. Supports shapes, connectors, swimlanes, text labels, and custom styling.
 
-**Supported diagram elements:**
-- Rectangles with optional rounded corners
-- Ellipses and circles
-- Diamond shapes (rhombus) for decision points
-- Connecting edges with arrows
-- Text labels on shapes
-- Custom colors and styling
+### Images and SVG
 
-**How to create Draw.io diagrams:**
-1. Go to https://app.diagrams.net/
-2. Create your diagram using shapes, connectors, and text
-3. Click "Extras → Edit Diagram" to get the XML
-4. Copy the entire `<mxGraphModel>` XML block
-5. Wrap in a markdown code block with `xml` language tag
-6. Embed in your markdown file
+Reference images normally in Markdown. SVG files are supported alongside PNG, JPG, GIF, and WebP. You can also embed raw `<svg>` tags directly in the document.
 
-See [Draw.io_Diagram_Example.md](Test_Files/Draw.io_Diagram_Example.md) for complete examples.
+### Resize and Reposition
+
+Hover over any image or Mermaid diagram to reveal handles:
+- **Bottom-right corner** — drag to resize (aspect ratio preserved)
+- **Top handle ⋮⋮** — drag to align left / center / right
+- **Double-click** — reset to original size and position
+
+Settings are saved per file and applied to PDF exports.
+
+### PDF Export
+
+**File → Export to PDF...** (`Cmd/Ctrl+P`) opens a save dialog. The PDF uses the current theme, font size, and all image/diagram layout settings.
+
+For the cleanest output, switch to one of the **Print** themes before exporting.
+
+### Page Settings
+
+Click the **📄** button in the toolbar to set paper size (A4, Letter, A3, etc.), orientation, margins, and enable **Page View** — a paginated layout that shows how the document will break across pages before you export.
+
+### File Watching
+
+When a file open in a tab is modified externally, PrintDown detects the change. If the tab has no unsaved edits it reloads automatically; if it has edits it prompts you to keep or discard them.
+
+### Session Restore
+
+On next launch, PrintDown reopens the same files, restores the active theme and font size, and remembers whether the TOC sidebar was open.
+
+---
+
+## Keyboard Shortcuts
+
+| Action | Shortcut |
+|--------|----------|
+| Open file | `Cmd/Ctrl+O` |
+| Save | `Cmd/Ctrl+S` |
+| Export to PDF | `Cmd/Ctrl+P` |
+| Increase font | `Cmd/Ctrl+=` |
+| Decrease font | `Cmd/Ctrl+-` |
+| Reset font | `Cmd/Ctrl+0` |
+| Toggle TOC | `Cmd/Ctrl+\` |
+| Quit | `Cmd/Ctrl+Q` |
+
+---
+
+## Supported Markdown
+
+- CommonMark + GitHub Flavored Markdown (tables, strikethrough, task lists)
+- Inline and display math (`$...$`, `$$...$$`)
+- Mermaid diagrams (fenced ` ```mermaid ` blocks)
+- Draw.io diagrams (fenced ` ```xml ` blocks containing `<mxGraphModel>`)
+- Inline HTML and SVG
+- Footnotes, definition lists, code syntax highlighting
+
+---
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
-
-## Author
-
-**Nambatipudi**
-- GitHub: [@nambatipudi](https://github.com/nambatipudi)
-
-## Acknowledgments
-
-- MathJax for mathematical typesetting
-- Mermaid for diagram rendering
-- markdown-it and markdown-it-texmath for Markdown parsing with math support
-- CodeMirror for inline Markdown editing
-- Electron community for the amazing framework
-
----
+[MIT](LICENSE) — © Narayan Ambatipudi

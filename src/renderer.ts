@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import texmath from 'markdown-it-texmath';
 import DOMPurify from 'dompurify';
+import { Graph, ModelXmlSerializer } from '@maxgraph/core';
 // CodeMirror imports
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -777,9 +778,6 @@ let mermaidCounter = 0;
 // Draw.io diagram counter
 let drawioCounter = 0;
 
-// Cache rendered draw.io SVGs by exact XML to avoid repeated iframe exports
-const drawioSvgCache = new Map<string, string>();
-
 // Initialize Mermaid
 function initMermaid(isDarkTheme: boolean = true, themeName: string = 'default', theme?: any) {
   if (window.mermaid) {
@@ -1046,6 +1044,17 @@ function setupPageSettingsUI() {
   closeBtn?.addEventListener('click', closeModal);
   cancelBtn?.addEventListener('click', closeModal);
   pageSizeSelect.addEventListener('change', refreshCustomVisibility);
+  // Apply page view immediately when checkbox is toggled (preview before saving)
+  pageViewToggle.addEventListener('change', () => {
+    const ps = { ...loadPageSettings(), pageView: pageViewToggle.checked };
+    applyPageView(ps);
+  });
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+      closeModal();
+      e.preventDefault();
+    }
+  });
 
   saveBtn?.addEventListener('click', () => {
     const settings: PageSettings = {
@@ -1320,686 +1329,50 @@ async function processDrawioDiagrams(container: HTMLElement) {
   }
 }
 
-function parseSvgDataUri(dataUri: string): SVGElement | null {
+// Renders a draw.io mxGraphModel XML diagram using @maxgraph/core (the actively maintained
+// mxGraph fork that draw.io is built on) for accurate shape, text, and edge rendering.
+async function renderDrawioDiagramToSVG(xmlContent: string): Promise<SVGElement | null> {
+  // Off-screen container — must be in the DOM for @maxgraph/core to render correctly
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-99999px;top:0;width:4000px;height:4000px;overflow:visible;pointer-events:none;';
+  document.body.appendChild(container);
+
+  let graph: Graph | null = null;
   try {
-    const comma = dataUri.indexOf(',');
-    if (comma === -1) return null;
-    const header = dataUri.slice(0, comma);
-    const payload = dataUri.slice(comma + 1);
-    let svgText = '';
-    if (/;base64/i.test(header)) {
-      // atob returns a binary string; convert bytes to UTF-8 text to avoid mojibake.
-      const binary = atob(payload);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      svgText = new TextDecoder('utf-8').decode(bytes);
-    } else {
-      svgText = decodeURIComponent(payload);
-    }
-    const parser = new DOMParser();
-    const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
-    const svg = svgDoc.documentElement;
-    if (!svg || svg.tagName.toLowerCase() !== 'svg') return null;
-    return document.importNode(svg, true) as unknown as SVGElement;
+    graph = new Graph(container);
+    graph.setEnabled(false);
+    // draw.io uses htmlLabels=true globally — enables foreignObject rendering so text wraps
+    graph.htmlLabels = true;
+
+    const serializer = new ModelXmlSerializer(graph.getDataModel());
+    serializer.import(xmlContent);
+
+    // One tick for any async rendering tasks to settle
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    const bounds = graph.getGraphBounds();
+    const svgEl = container.querySelector('svg') as SVGElement | null;
+    if (!svgEl) return null;
+
+    const pad = 20;
+    const vw = Math.ceil(bounds.width + pad * 2);
+    const vh = Math.ceil(bounds.height + pad * 2);
+
+    const clone = svgEl.cloneNode(true) as SVGElement;
+    clone.setAttribute('width', String(vw));
+    clone.setAttribute('height', String(vh));
+    clone.setAttribute('viewBox', `${bounds.x - pad} ${bounds.y - pad} ${vw} ${vh}`);
+    clone.style.cssText = 'max-width:100%;display:block;';
+
+    return clone;
   } catch (err) {
-    console.error('[DRAWIO] Failed to parse SVG data URI:', err);
+    console.error('[draw.io] maxgraph render error:', err);
     return null;
+  } finally {
+    try { if (graph) graph.destroy(); } catch (_) {}
+    if (container.parentNode) container.parentNode.removeChild(container);
   }
 }
-
-function createDrawioImageElement(dataUri: string): HTMLImageElement {
-  const img = document.createElement('img');
-  img.src = dataUri;
-  img.alt = 'Draw.io diagram';
-  img.style.maxWidth = '100%';
-  img.style.height = 'auto';
-  img.style.border = '1px solid #e0e0e0';
-  img.style.borderRadius = '4px';
-  img.style.backgroundColor = '#ffffff';
-  return img;
-}
-
-async function renderDrawioDiagramToSVGViaEmbed(xmlContent: string): Promise<Element | null> {
-  const cached = drawioSvgCache.get(xmlContent);
-  if (cached) {
-    return createDrawioImageElement(cached);
-  }
-
-  return new Promise((resolve) => {
-    const iframe = document.createElement('iframe');
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.opacity = '0';
-    iframe.style.position = 'absolute';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
-    iframe.setAttribute('aria-hidden', 'true');
-    iframe.setAttribute('tabindex', '-1');
-    iframe.src = 'https://embed.diagrams.net/?embed=1&proto=json&spin=0&ui=min&noSaveBtn=1&saveAndExit=0&noExitBtn=1';
-
-    let settled = false;
-    const timeoutId = window.setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        cleanup();
-        resolve(null);
-      }
-    }, 12000);
-
-    const cleanup = () => {
-      window.clearTimeout(timeoutId);
-      window.removeEventListener('message', onMessage);
-      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-    };
-
-    const postToEmbed = (msg: Record<string, any>) => {
-      if (!iframe.contentWindow) return;
-      iframe.contentWindow.postMessage(JSON.stringify(msg), 'https://embed.diagrams.net');
-    };
-
-    const onMessage = (evt: MessageEvent) => {
-      if (evt.origin !== 'https://embed.diagrams.net') return;
-      if (evt.source !== iframe.contentWindow) return;
-
-      let msg: any = evt.data;
-      if (typeof msg === 'string') {
-        try {
-          msg = JSON.parse(msg);
-        } catch {
-          return;
-        }
-      }
-      if (!msg || typeof msg !== 'object') return;
-
-      if (msg.event === 'init') {
-        postToEmbed({
-          action: 'load',
-          xml: xmlContent,
-          noSaveBtn: 1,
-          noExitBtn: 1,
-          saveAndExit: 0,
-          modified: 0,
-          autosave: 0
-        });
-        return;
-      }
-
-      if (msg.event === 'load') {
-        postToEmbed({ action: 'export', format: 'svg', border: 0, embedImages: true });
-        return;
-      }
-
-      if (msg.event === 'export' && typeof msg.data === 'string') {
-        drawioSvgCache.set(xmlContent, msg.data);
-        const rendered = createDrawioImageElement(msg.data);
-        if (!settled) {
-          settled = true;
-          cleanup();
-          resolve(rendered);
-        }
-        return;
-      }
-
-      if ((msg.event === 'export' && msg.error) || msg.error) {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          resolve(null);
-        }
-      }
-    };
-
-    window.addEventListener('message', onMessage);
-    document.body.appendChild(iframe);
-  });
-}
-
-// Primary draw.io renderer: official diagrams.net export path with local fallback
-async function renderDrawioDiagramToSVG(xmlContent: string): Promise<Element | null> {
-  const officialRendered = await renderDrawioDiagramToSVGViaEmbed(xmlContent);
-  if (officialRendered) {
-    return officialRendered;
-  }
-  return renderDrawioDiagramToSVGLegacy(xmlContent);
-}
-
-// Helper function to render draw.io XML to SVG (legacy local fallback)
-function renderDrawioDiagramToSVGLegacy(xmlContent: string): SVGElement | null {
-  try {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
-    
-    // Check for parser errors
-    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
-      return null;
-    }
-    
-    const mxGraphModel = xmlDoc.getElementsByTagName('mxGraphModel')[0];
-    if (!mxGraphModel) {
-      return null;
-    }
-    
-    // Get canvas dimensions
-    const modelWidth = parseInt(mxGraphModel.getAttribute('dx') || '800');
-    const modelHeight = parseInt(mxGraphModel.getAttribute('dy') || '600');
-    
-    // Get all cells - first pass to compute bounding box
-    const root = xmlDoc.getElementsByTagName('root')[0];
-    if (!root) {
-      return null;
-    }
-
-    // Pre-pass: collect raw geometry for every non-edge vertex cell so we can resolve parent chains
-    interface RawCell { id: string; parent: string; x: number; y: number; width: number; height: number; value: string; style: string; isEdge: boolean; }
-    const rawCells = new Map<string, RawCell>();
-    const allCells = root.getElementsByTagName('mxCell');
-    for (let i = 0; i < allCells.length; i++) {
-      const cell = allCells[i];
-      const id = cell.getAttribute('id');
-      if (!id) continue;
-      const isEdge = cell.getAttribute('edge') === '1';
-      const parent = cell.getAttribute('parent') || '1';
-      const geom = cell.getElementsByTagName('mxGeometry')[0];
-      if (!geom || geom.getAttribute('relative') === '1') continue;
-      rawCells.set(id, {
-        id, parent,
-        x: parseFloat(geom.getAttribute('x') || '0'),
-        y: parseFloat(geom.getAttribute('y') || '0'),
-        width: parseFloat(geom.getAttribute('width') || '0'),
-        height: parseFloat(geom.getAttribute('height') || '0'),
-        value: cell.getAttribute('value') || '',
-        style: cell.getAttribute('style') || '',
-        isEdge
-      });
-    }
-
-    // Resolve absolute position by walking parent chain (max depth 10 to avoid cycles)
-    const resolveAbsPos = (id: string): {x: number; y: number} => {
-      const rc = rawCells.get(id);
-      if (!rc || rc.parent === '0' || rc.parent === '1' || !rawCells.has(rc.parent)) {
-        return { x: rc ? rc.x : 0, y: rc ? rc.y : 0 };
-      }
-      const parentPos = resolveAbsPos(rc.parent);
-      // For swimlane children, draw.io adds startSize (header height) to y when rendering
-      const parentCell = rawCells.get(rc.parent);
-      const parentStyle = parentCell ? parentCell.style : '';
-      const isSwimlane = parentStyle.includes('swimlane');
-      const startSize = isSwimlane ? parseFloat(extractStyleAttribute(parentStyle, 'startSize') || '30') : 0;
-      return { x: parentPos.x + rc.x, y: parentPos.y + startSize + rc.y };
-    };
-
-    // Compute actual content bounds from VERTEX cells only (using absolute positions)
-    let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
-    for (const [id, rc] of rawCells) {
-      if (!id || id === '0' || id === '1') continue;
-      if (rc.isEdge) continue;
-      if (rc.width === 0 && rc.height === 0) continue;
-      const absPos = resolveAbsPos(id);
-      minX = Math.min(minX, absPos.x);
-      minY = Math.min(minY, absPos.y);
-      maxX = Math.max(maxX, absPos.x + rc.width);
-      maxY = Math.max(maxY, absPos.y + rc.height);
-    }
-    if (minX === Infinity) { minX = 0; minY = 0; }
-    const padding = 20;
-    const contentW = maxX - minX + padding * 2;
-    const contentH = maxY - minY + padding * 2;
-    const offsetX = -minX + padding;
-    const offsetY = -minY + padding;
-
-    // Create SVG element
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', String(contentW));
-    svg.setAttribute('height', String(contentH));
-    svg.setAttribute('viewBox', `0 0 ${contentW} ${contentH}`);
-    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    svg.style.border = '1px solid #e0e0e0';
-    svg.style.borderRadius = '4px';
-    svg.style.backgroundColor = '#ffffff';
-    svg.style.maxWidth = '100%';
-    svg.style.height = 'auto';
-
-    // Draw background
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('width', String(contentW));
-    bg.setAttribute('height', String(contentH));
-    bg.setAttribute('fill', '#ffffff');
-    svg.appendChild(bg);
-    
-    const cells = root.getElementsByTagName('mxCell');
-    interface EdgeData { source: string; target: string; style: string; waypoints: Array<{x:number,y:number}>; label: string; }
-    const edges: Array<EdgeData> = [];
-    const cellMap = new Map<string, any>();
-    // Track which cell IDs are edges (so we can skip their label children)
-    const edgeIds = new Set<string>();
-    
-    // First pass: extract cells using resolved absolute positions from pre-pass
-    for (const [id, rc] of rawCells) {
-      if (id === '0' || id === '1') continue;
-      if (rc.isEdge) {
-        edgeIds.add(id);
-        continue;
-      }
-      if (rc.width === 0 && rc.height === 0) continue;
-      const absPos = resolveAbsPos(id);
-      cellMap.set(id, { x: absPos.x, y: absPos.y, width: rc.width, height: rc.height, value: rc.value, style: rc.style });
-    }
-
-    // Collect edges from cells (needs the DOM for waypoints and edge labels)
-    for (let i = 0; i < cells.length; i++) {
-      const cell = cells[i];
-      const id = cell.getAttribute('id');
-      if (!id || id === '0' || id === '1') continue;
-      if (cell.getAttribute('edge') !== '1') continue;
-      const source = cell.getAttribute('source');
-      const target = cell.getAttribute('target');
-      if (source && target) {
-        const waypoints: Array<{x:number,y:number}> = [];
-        const mxGeom = cell.getElementsByTagName('mxGeometry')[0];
-        if (mxGeom) {
-          const pts = mxGeom.getElementsByTagName('mxPoint');
-          for (let j = 0; j < pts.length; j++) {
-            const px = parseFloat(pts[j].getAttribute('x') || '0');
-            const py = parseFloat(pts[j].getAttribute('y') || '0');
-            waypoints.push({ x: px, y: py });
-          }
-        }
-        let label = '';
-        for (let j = 0; j < cells.length; j++) {
-          const lc = cells[j];
-          if (lc.getAttribute('parent') === id && lc.getAttribute('connectable') === '0') {
-            label = lc.getAttribute('value') || '';
-            break;
-          }
-        }
-        const edgeStyle = cell.getAttribute('style') || '';
-        edges.push({ source, target, style: edgeStyle, waypoints, label });
-      }
-    }
-    
-    // Second pass: draw vertex cells
-    const renderedIds = new Set<string>();
-    // We need a defs section for clipPaths - create it lazily
-    let svgDefs: SVGDefsElement | null = null;
-    const getOrCreateDefs = () => {
-      if (!svgDefs) {
-        svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs') as unknown as SVGDefsElement;
-        svg.insertBefore(svgDefs, svg.firstChild);
-      }
-      return svgDefs;
-    };
-    let clipPathCounter = 0;
-
-    for (const [id, cellData] of cellMap) {
-      if (renderedIds.has(id)) continue;
-      renderedIds.add(id);
-      
-      // Apply offset to translate content into view
-      const x = cellData.x + offsetX;
-      const y = cellData.y + offsetY;
-      const { width, height, value, style } = cellData;
-      
-      // Parse style
-      const isSwimlane = style.includes('swimlane');
-      const shape = extractStyleAttribute(style, 'shape') || (style.includes('ellipse') ? 'ellipse' : (style.includes('rhombus') ? 'rhombus' : ''));
-      const fillColor = extractStyleAttribute(style, 'fillColor') || '#dae8fc';
-      const strokeColor = extractStyleAttribute(style, 'strokeColor') || '#6c8ebf';
-      const rounded = extractStyleAttribute(style, 'rounded') === '1';
-      let fontSize = parseInt(extractStyleAttribute(style, 'fontSize') || '12');
-      if (isNaN(fontSize) || fontSize < 8) fontSize = 12;
-      if (fontSize > 48) fontSize = 48;
-      const opacityVal = extractStyleAttribute(style, 'opacity');
-      const fillOpacity = opacityVal ? String(parseFloat(opacityVal) / 100) : '1';
-      
-      // Draw based on shape
-      if (shape === 'ellipse' || shape === 'circle') {
-        // Draw ellipse
-        const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-        ellipse.setAttribute('cx', String(x + width / 2));
-        ellipse.setAttribute('cy', String(y + height / 2));
-        ellipse.setAttribute('rx', String(width / 2));
-        ellipse.setAttribute('ry', String(height / 2));
-        ellipse.setAttribute('fill', fillColor);
-        ellipse.setAttribute('fill-opacity', fillOpacity);
-        ellipse.setAttribute('stroke', strokeColor);
-        ellipse.setAttribute('stroke-width', '1.5');
-        svg.appendChild(ellipse);
-      } else if (shape === 'rhombus') {
-        // Draw diamond
-        const points = [
-          [x + width / 2, y],
-          [x + width, y + height / 2],
-          [x + width / 2, y + height],
-          [x, y + height / 2]
-        ];
-        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        polygon.setAttribute('points', points.map(p => p.join(',')).join(' '));
-        polygon.setAttribute('fill', fillColor);
-        polygon.setAttribute('fill-opacity', fillOpacity);
-        polygon.setAttribute('stroke', strokeColor);
-        polygon.setAttribute('stroke-width', '1.5');
-        svg.appendChild(polygon);
-      } else {
-        // Draw rectangle (default). For swimlane, also draw header bar.
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', String(x));
-        rect.setAttribute('y', String(y));
-        rect.setAttribute('width', String(width));
-        rect.setAttribute('height', String(height));
-        rect.setAttribute('fill', fillColor);
-        rect.setAttribute('fill-opacity', fillOpacity);
-        rect.setAttribute('stroke', strokeColor);
-        rect.setAttribute('stroke-width', '1.5');
-        if (rounded) {
-          rect.setAttribute('rx', '5');
-          rect.setAttribute('ry', '5');
-        }
-        svg.appendChild(rect);
-
-        if (isSwimlane) {
-          const startSize = parseFloat(extractStyleAttribute(style, 'startSize') || '30');
-          // Draw header bar background
-          const hdr = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-          hdr.setAttribute('x', String(x));
-          hdr.setAttribute('y', String(y));
-          hdr.setAttribute('width', String(width));
-          hdr.setAttribute('height', String(startSize));
-          hdr.setAttribute('fill', fillColor);
-          hdr.setAttribute('fill-opacity', fillOpacity);
-          hdr.setAttribute('stroke', strokeColor);
-          hdr.setAttribute('stroke-width', '1.5');
-          svg.appendChild(hdr);
-          // Draw separator line
-          const sep = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-          sep.setAttribute('x1', String(x));
-          sep.setAttribute('y1', String(y + startSize));
-          sep.setAttribute('x2', String(x + width));
-          sep.setAttribute('y2', String(y + startSize));
-          sep.setAttribute('stroke', strokeColor);
-          sep.setAttribute('stroke-width', '1.5');
-          svg.appendChild(sep);
-        }
-      }
-      
-      // Add text label
-      if (value && value.trim()) {
-        // Decode XML/HTML entities including &#xa; (newline), &#x27; etc.
-        let textContent = value.trim();
-        textContent = textContent
-          .replace(/&#xa;/gi, '\n')
-          .replace(/&#xA;/g, '\n')
-          .replace(/<br\s*\/?\s*>/gi, '\n')
-          .replace(/<\/div>\s*<div>/gi, '\n')
-          .replace(/<\/p>\s*<p>/gi, '\n')
-          .replace(/\n/g, '\n')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
-          .replace(/&#x27;/g, "'")
-          .replace(/<[^>]+>/g, '');
-
-        const rawLines = textContent.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
-        const whiteSpace = extractStyleAttribute(style, 'whiteSpace') || '';
-        const doWrap = whiteSpace === 'wrap';
-        const approxCharsPerLine = Math.max(8, Math.floor((width - 10) / Math.max(1, fontSize * 0.56)));
-        const lines: string[] = [];
-        for (const rawLine of rawLines) {
-          if (!doWrap || rawLine.length <= approxCharsPerLine) {
-            lines.push(rawLine);
-            continue;
-          }
-          const words = rawLine.split(/\s+/);
-          let current = '';
-          for (const word of words) {
-            const next = current ? `${current} ${word}` : word;
-            if (next.length > approxCharsPerLine && current) {
-              lines.push(current);
-              current = word;
-            } else {
-              current = next;
-            }
-          }
-          if (current) lines.push(current);
-        }
-        const lineHeight = fontSize + 3;
-        const totalTextHeight = lines.length * lineHeight;
-
-        // Handle text alignment from style
-        // For swimlane: text goes in the header (top startSize px), verticalAlign=top
-        const verticalAlign = isSwimlane ? 'top' : (extractStyleAttribute(style, 'verticalAlign') || 'middle');
-        const alignH = extractStyleAttribute(style, 'align') || 'center';
-        const spacingLeft = parseFloat(extractStyleAttribute(style, 'spacingLeft') || '0');
-        const fontColor = extractStyleAttribute(style, 'fontColor') || '#000000';
-        const fontStyleAttr = parseInt(extractStyleAttribute(style, 'fontStyle') || '0');
-        const isBold = (fontStyleAttr & 1) === 1;
-
-        // For swimlane: render text only in header
-        const swimStartSize = isSwimlane ? parseFloat(extractStyleAttribute(style, 'startSize') || '30') : 0;
-        const textAreaHeight = isSwimlane ? swimStartSize : height;
-
-        // Compute text x position and anchor
-        let textX: number;
-        let textAnchor: string;
-        if (alignH === 'left') {
-          textX = x + spacingLeft + 4;
-          textAnchor = 'start';
-        } else if (alignH === 'right') {
-          textX = x + width - 4;
-          textAnchor = 'end';
-        } else {
-          textX = x + width / 2;
-          textAnchor = 'middle';
-        }
-
-        // Compute text y start position
-        let startY: number;
-        if (verticalAlign === 'top') {
-          startY = y + fontSize + 4;
-        } else if (verticalAlign === 'bottom') {
-          startY = y + textAreaHeight - totalTextHeight + lineHeight / 2;
-        } else {
-          startY = (y + textAreaHeight / 2) - (totalTextHeight / 2) + (lineHeight / 2);
-        }
-
-        // Create clipPath to prevent text overflow outside cell bounds
-        const clipId = `clip_${++clipPathCounter}`;
-        const defs = getOrCreateDefs();
-        const clipPath = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
-        clipPath.setAttribute('id', clipId);
-        const clipRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        clipRect.setAttribute('x', String(x + 1));
-        clipRect.setAttribute('y', String(y + 1));
-        clipRect.setAttribute('width', String(Math.max(0, width - 2)));
-        clipRect.setAttribute('height', String(Math.max(0, textAreaHeight - 2)));
-        clipPath.appendChild(clipRect);
-        defs.appendChild(clipPath);
-
-        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', String(textX));
-        text.setAttribute('y', String(startY));
-        text.setAttribute('text-anchor', textAnchor);
-        text.setAttribute('dominant-baseline', 'middle');
-        text.setAttribute('font-size', String(fontSize));
-        text.setAttribute('font-family', 'Arial, sans-serif');
-        text.setAttribute('fill', fontColor);
-        text.setAttribute('pointer-events', 'none');
-        text.setAttribute('clip-path', `url(#${clipId})`);
-        if (isBold) text.setAttribute('font-weight', 'bold');
-
-        if (lines.length === 1) {
-          text.textContent = lines[0];
-        } else {
-          lines.forEach((line: string, idx: number) => {
-            const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-            tspan.setAttribute('x', String(textX));
-            tspan.setAttribute('y', String(startY + idx * lineHeight));
-            tspan.setAttribute('dominant-baseline', 'middle');
-            tspan.textContent = line;
-            text.appendChild(tspan);
-          });
-        }
-
-        svg.appendChild(text);
-      }
-    }
-    
-    // Third pass: draw edges with orthogonal routing
-    // Build unique marker ids per color to avoid conflicts
-    const markerColors = new Map<string, string>();
-    const defsEl = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-
-    const getMarkerId = (color: string, open: boolean) => {
-      const key = color + (open ? '-open' : '-filled');
-      if (!markerColors.has(key)) {
-        markerColors.set(key, key.replace(/[^a-zA-Z0-9]/g, '_'));
-        const mk = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-        const mkId = 'arrow_' + markerColors.get(key);
-        mk.setAttribute('id', mkId);
-        mk.setAttribute('markerWidth', '8');
-        mk.setAttribute('markerHeight', '8');
-        mk.setAttribute('refX', open ? '6' : '5');
-        mk.setAttribute('refY', '3');
-        mk.setAttribute('orient', 'auto');
-        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-        if (open) {
-          // Open arrow: just two lines (use polyline)
-          const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-          pl.setAttribute('points', '0,0 6,3 0,6');
-          pl.setAttribute('fill', 'none');
-          pl.setAttribute('stroke', color);
-          pl.setAttribute('stroke-width', '1.5');
-          mk.appendChild(pl);
-        } else {
-          poly.setAttribute('points', '0 0, 8 3, 0 6');
-          poly.setAttribute('fill', color);
-          mk.appendChild(poly);
-        }
-        defsEl.appendChild(mk);
-      }
-      return 'arrow_' + markerColors.get(key);
-    };
-
-    const getBorderAnchor = (cell: any, towardX: number, towardY: number) => {
-      const left = cell.x + offsetX;
-      const right = left + cell.width;
-      const top = cell.y + offsetY;
-      const bottom = top + cell.height;
-      const cx = left + cell.width / 2;
-      const cy = top + cell.height / 2;
-      const dx = towardX - cx;
-      const dy = towardY - cy;
-      if (Math.abs(dx) >= Math.abs(dy)) {
-        return { x: dx >= 0 ? right : left, y: cy };
-      }
-      return { x: cx, y: dy >= 0 ? bottom : top };
-    };
-
-    for (const edge of edges) {
-      const sourceCell = cellMap.get(edge.source);
-      const targetCell = cellMap.get(edge.target);
-      if (!sourceCell || !targetCell) continue;
-
-      const strokeColor = extractStyleAttribute(edge.style, 'strokeColor') ||
-                          extractStyleAttribute(edge.style, 'stroke') || '#666666';
-      const strokeWidth = extractStyleAttribute(edge.style, 'strokeWidth') || '1.5';
-      const dashed = edge.style.includes('dashed=1') || edge.style.includes('dashed');
-      const openArrow = edge.style.includes('endArrow=open') || edge.style.includes('endFill=0');
-      const noArrow = edge.style.includes('endArrow=none');
-
-      // Compute edge endpoints on cell borders (not centers)
-      const scx = sourceCell.x + offsetX + sourceCell.width / 2;
-      const scy = sourceCell.y + offsetY + sourceCell.height / 2;
-      const tcx = targetCell.x + offsetX + targetCell.width / 2;
-      const tcy = targetCell.y + offsetY + targetCell.height / 2;
-
-      let pts: Array<{x:number,y:number}>;
-      if (edge.waypoints.length > 0) {
-        // Use explicit waypoints - connect source edge → waypoints → target edge
-        const firstWp = { x: edge.waypoints[0].x + offsetX, y: edge.waypoints[0].y + offsetY };
-        const lastWp = { x: edge.waypoints[edge.waypoints.length-1].x + offsetX, y: edge.waypoints[edge.waypoints.length-1].y + offsetY };
-        // Exit source toward first waypoint
-        const sx = Math.abs(firstWp.x - scx) > Math.abs(firstWp.y - scy)
-          ? (firstWp.x > scx ? sourceCell.x + offsetX + sourceCell.width : sourceCell.x + offsetX)
-          : scx;
-        const sy = Math.abs(firstWp.x - scx) > Math.abs(firstWp.y - scy)
-          ? scy
-          : (firstWp.y > scy ? sourceCell.y + offsetY + sourceCell.height : sourceCell.y + offsetY);
-        // Enter target from last waypoint
-        const tx = Math.abs(lastWp.x - tcx) > Math.abs(lastWp.y - tcy)
-          ? (lastWp.x < tcx ? targetCell.x + offsetX : targetCell.x + offsetX + targetCell.width)
-          : tcx;
-        const ty = Math.abs(lastWp.x - tcx) > Math.abs(lastWp.y - tcy)
-          ? tcy
-          : (lastWp.y < tcy ? targetCell.y + offsetY : targetCell.y + offsetY + targetCell.height);
-        pts = [
-          { x: sx, y: sy },
-          ...edge.waypoints.map(p => ({ x: p.x + offsetX, y: p.y + offsetY })),
-          { x: tx, y: ty }
-        ];
-      } else {
-        // Auto-route: orthogonal path using border anchors to avoid crossing node text
-        const start = getBorderAnchor(sourceCell, tcx, tcy);
-        const end = getBorderAnchor(targetCell, scx, scy);
-        const sx = start.x, sy = start.y, tx = end.x, ty = end.y;
-        const midX = (sx + tx) / 2;
-        pts = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
-      }
-
-      // Build SVG path
-      let d = `M ${pts[0].x} ${pts[0].y}`;
-      for (let j = 1; j < pts.length; j++) {
-        d += ` L ${pts[j].x} ${pts[j].y}`;
-      }
-
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', d);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', strokeColor);
-      path.setAttribute('stroke-width', strokeWidth);
-      if (dashed) path.setAttribute('stroke-dasharray', '5,4');
-      if (!noArrow) path.setAttribute('marker-end', `url(#${getMarkerId(strokeColor, openArrow)})`);
-      svg.appendChild(path);
-
-      // Draw edge label if present
-      if (edge.label && edge.label.trim()) {
-        const midIdx = Math.floor(pts.length / 2);
-        const lx = (pts[midIdx-1].x + pts[midIdx].x) / 2;
-        const ly = (pts[midIdx-1].y + pts[midIdx].y) / 2;
-        const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        lbl.setAttribute('x', String(lx));
-        lbl.setAttribute('y', String(ly - 4));
-        lbl.setAttribute('text-anchor', 'middle');
-        lbl.setAttribute('font-size', '10');
-        lbl.setAttribute('font-family', 'Arial, sans-serif');
-        lbl.setAttribute('fill', '#333333');
-        lbl.setAttribute('pointer-events', 'none');
-        // White background rect for readability
-        const bbox_w = edge.label.length * 5.5;
-        const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        bgRect.setAttribute('x', String(lx - bbox_w / 2));
-        bgRect.setAttribute('y', String(ly - 16));
-        bgRect.setAttribute('width', String(bbox_w));
-        bgRect.setAttribute('height', '12');
-        bgRect.setAttribute('fill', 'white');
-        bgRect.setAttribute('fill-opacity', '0.85');
-        svg.appendChild(bgRect);
-        lbl.textContent = edge.label;
-        svg.appendChild(lbl);
-      }
-    }
-
-    svg.insertBefore(defsEl, svg.firstChild);
-    
-    return svg;
-  } catch (err) {
-    console.error('[DRAWIO] SVG rendering error:', err);
-    return null;
-  }
-}
-
 // Helper to extract style attributes
 function extractStyleAttribute(style: string, attr: string): string {
   if (!style) return '';
@@ -2284,7 +1657,11 @@ async function renderTab(index: number, options: RenderOptions = {}) {
 
   // Process markdown with markdown-it (no manual math extraction needed!)
   let html = md.render(markdownBody);
-  
+
+  // Convert GitHub-style task list items to HTML checkboxes
+  html = html.replace(/<li>\[\s*[xX]\s*\]\s*/g, '<li><input type="checkbox" checked disabled> ');
+  html = html.replace(/<li>\[\s*\]\s*/g, '<li><input type="checkbox" disabled> ');
+
   // SAFE image path rewriting using DOM (preserve absolute, file://, UNC, drive-letter paths)
   if (tab.filePath) {
     try {
@@ -2333,7 +1710,8 @@ async function renderTab(index: number, options: RenderOptions = {}) {
                'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r', 'd',
                'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width',
                'stroke-dasharray', 'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
-               'markerWidth', 'markerHeight', 'refX', 'refY', 'orient'],
+               'markerWidth', 'markerHeight', 'refX', 'refY', 'orient',
+               'checked', 'disabled', 'type'],
     FORCE_BODY: false,
   });
   // Tag raw markdown SVGs before MathJax runs so our responsive SVG CSS
@@ -3366,6 +2744,44 @@ setupPageSettingsUI();
 window.addEventListener('resize', scheduleReflow);
 // Also after mouse/touch interactions (e.g., resizable diagrams/images)
 ['mouseup', 'touchend'].forEach(evt => window.addEventListener(evt, scheduleReflow));
+
+// Renderer-side keyboard shortcut handler.
+// The menu accelerators in main.ts cover native usage; this handler covers
+// Playwright tests and any non-native code path that sends DOM key events.
+document.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  switch (e.key) {
+    case '=':
+    case '+':
+      if (fontSizeFactor < MAX_FACTOR) {
+        fontSizeFactor = Math.min(MAX_FACTOR, fontSizeFactor + STEP);
+        applyFontSizeFactor(fontSizeFactor);
+      }
+      e.preventDefault();
+      break;
+    case '-':
+      if (fontSizeFactor > MIN_FACTOR) {
+        fontSizeFactor = Math.max(MIN_FACTOR, fontSizeFactor - STEP);
+        applyFontSizeFactor(fontSizeFactor);
+      }
+      e.preventDefault();
+      break;
+    case '0':
+      fontSizeFactor = 1.0;
+      applyFontSizeFactor(fontSizeFactor);
+      e.preventDefault();
+      break;
+    case 's':
+    case 'S':
+      saveActiveTab().catch(console.error);
+      e.preventDefault();
+      break;
+    case '\\':
+      toggleTOC();
+      e.preventDefault();
+      break;
+  }
+});
 
 // Font size menu events
 window.menuEvents.onMenuFontIncrease(() => {

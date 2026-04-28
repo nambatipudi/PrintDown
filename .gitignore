@@ -24,3 +24,7 @@ yarn-error.log*
 *.tmp
 *.temp
 
+# Playwright test artifacts (snapshots ARE committed as regression baselines)
+test-results/
+playwright-report/
+
