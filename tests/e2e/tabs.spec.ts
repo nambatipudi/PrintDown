@@ -4,7 +4,8 @@
  * context menu, tab scroll arrows, tab label.
  */
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { launchApp, openFile, openAndWait, fixture, TEST_FILES } from './helpers/app';
+import { launchApp, openFile, openAndWait, fixture, createTempMd, removeTempMd } from './helpers/app';
+import * as fs from 'fs';
 import * as path from 'path';
 
 let app: ElectronApplication;
@@ -73,8 +74,8 @@ test('context menu has Close, Close Others, Close All actions', async () => {
   await expect(menu.locator('[data-action="close"]')).toBeVisible();
   await expect(menu.locator('[data-action="close-others"]')).toBeVisible();
   await expect(menu.locator('[data-action="close-all"]')).toBeVisible();
-  // Dismiss menu by clicking elsewhere
-  await page.keyboard.press('Escape');
+  // Dismiss the menu so it cannot intercept later test interactions.
+  await page.mouse.click(1100, 700);
   await page.waitForTimeout(150);
 });
 
@@ -105,6 +106,105 @@ test('Close Others leaves only the right-clicked tab', async () => {
   await page.waitForTimeout(300);
 
   await expect(page.locator('#tabs .tab')).toHaveCount(1);
+});
+
+// ── Unsaved changes ────────────────────────────────────────────────────────
+
+async function makeActiveTabDirty(page: Page, marker: string) {
+  const splitContainer = page.locator('#split-container');
+  if (await splitContainer.evaluate(element => element.classList.contains('view-only'))) {
+    await page.locator('#edit-toggle').click();
+    await page.waitForTimeout(300);
+  }
+  await page.locator('#editor-container .cm-content').first().click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type(marker);
+  await page.waitForTimeout(600);
+}
+
+test('Cancel keeps a dirty tab open', async () => {
+  const filePath = createTempMd('# Keep Changes\n\nOriginal content.', 'keep-changes');
+  try {
+    await openFile(app, filePath);
+    await page.waitForTimeout(600);
+    await makeActiveTabDirty(page, 'UNSAVED_CANCEL_MARKER');
+
+    const tab = page.locator('#tabs .tab').filter({ hasText: 'keep-changes' });
+    await tab.locator('.tab-close').click();
+    await expect(page.locator('#unsaved-changes-modal')).not.toHaveClass(/hidden/);
+    await page.locator('#unsaved-changes-cancel').click();
+
+    await expect(tab).toBeVisible();
+    await expect(page.locator('#markdown-content')).toContainText('UNSAVED_CANCEL_MARKER');
+  } finally {
+    removeTempMd(filePath);
+  }
+});
+
+test('Discard closes a dirty tab without writing local changes', async () => {
+  const filePath = createTempMd('# Discard Changes\n\nOriginal content.', 'discard-changes');
+  try {
+    await openFile(app, filePath);
+    await page.waitForTimeout(600);
+    await makeActiveTabDirty(page, 'UNSAVED_DISCARD_MARKER');
+
+    const tab = page.locator('#tabs .tab').filter({ hasText: 'discard-changes' });
+    await tab.locator('.tab-close').click();
+    await expect(page.locator('#unsaved-changes-modal')).not.toHaveClass(/hidden/);
+    await page.locator('#unsaved-changes-discard').click();
+
+    await expect(tab).toHaveCount(0);
+    expect(fs.readFileSync(filePath, 'utf-8')).not.toContain('UNSAVED_DISCARD_MARKER');
+  } finally {
+    removeTempMd(filePath);
+  }
+});
+
+test('Save All writes dirty changes before closing a tab', async () => {
+  const filePath = createTempMd('# Save Changes\n\nOriginal content.', 'save-changes');
+  try {
+    await openFile(app, filePath);
+    await page.waitForTimeout(600);
+    await makeActiveTabDirty(page, 'UNSAVED_SAVE_MARKER');
+
+    const tab = page.locator('#tabs .tab').filter({ hasText: 'save-changes' });
+    await tab.locator('.tab-close').click();
+    await expect(page.locator('#unsaved-changes-modal')).not.toHaveClass(/hidden/);
+    await page.locator('#unsaved-changes-save').click();
+
+    await expect(tab).toHaveCount(0);
+    expect(fs.readFileSync(filePath, 'utf-8')).toContain('UNSAVED_SAVE_MARKER');
+  } finally {
+    removeTempMd(filePath);
+  }
+});
+
+test('Close Others preserves the selected tab and prompts for dirty discarded tabs', async () => {
+  const retainedPath = createTempMd('# Retained\n\nKeep this tab.', 'retained-tab');
+  const discardedPath = createTempMd('# Discarded\n\nEdit this tab.', 'discarded-tab');
+  try {
+    await openFile(app, retainedPath);
+    await page.waitForTimeout(400);
+    await openFile(app, discardedPath);
+    await page.waitForTimeout(400);
+    await makeActiveTabDirty(page, 'CLOSE_OTHERS_MARKER');
+    await page.locator('#edit-toggle').click();
+    await page.waitForTimeout(300);
+
+    const retainedTab = page.locator('#tabs .tab').filter({ hasText: 'retained-tab' });
+    await retainedTab.click({ button: 'right' });
+    await page.locator('#tab-context-menu [data-action="close-others"]').click();
+    await expect(page.locator('#unsaved-changes-modal')).not.toHaveClass(/hidden/);
+    await page.locator('#unsaved-changes-discard').click();
+
+    await expect(page.locator('#tabs .tab')).toHaveCount(1);
+    await expect(retainedTab).toBeVisible();
+    expect(fs.readFileSync(discardedPath, 'utf-8')).not.toContain('CLOSE_OTHERS_MARKER');
+  } finally {
+    removeTempMd(retainedPath);
+    removeTempMd(discardedPath);
+  }
 });
 
 // ── Tab scroll arrows ──────────────────────────────────────────────────────

@@ -2420,28 +2420,109 @@ function fileDir(filePath: string): string {
   return i > 0 ? filePath.substring(0, i) : filePath;
 }
 
-function maybeDisallowProtocolDir(closedFilePath: string): void {
-  const dir = fileDir(closedFilePath);
-  const stillInUse = tabs.some(t => t.filePath && fileDir(t.filePath) === dir);
-  if (!stillInUse) {
-    window.protocolDirs.disallow(dir);
+type UnsavedChangesAction = 'save' | 'discard' | 'cancel';
+
+async function confirmClosingDirtyTabs(tabsToClose: Tab[]): Promise<UnsavedChangesAction> {
+  const dirtyTabs = tabsToClose.filter(tab => tab.isDirty);
+  if (dirtyTabs.length === 0) {
+    return 'discard';
+  }
+
+  const modal = document.getElementById('unsaved-changes-modal');
+  const message = document.getElementById('unsaved-changes-message');
+  const saveButton = document.getElementById('unsaved-changes-save');
+  const discardButton = document.getElementById('unsaved-changes-discard');
+  const cancelButton = document.getElementById('unsaved-changes-cancel');
+  if (!modal || !message || !saveButton || !discardButton || !cancelButton) {
+    console.error('[TABS] Unsaved changes dialog is unavailable.');
+    return 'cancel';
+  }
+
+  const fileLabel = dirtyTabs.length === 1
+    ? `"${dirtyTabs[0].title}" has unsaved changes.`
+    : `${dirtyTabs.length} files have unsaved changes.`;
+  message.textContent = `${fileLabel} Save changes before closing?`;
+  modal.classList.remove('hidden');
+
+  return new Promise(resolve => {
+    const complete = (action: UnsavedChangesAction) => {
+      modal.classList.add('hidden');
+      saveButton.removeEventListener('click', save);
+      discardButton.removeEventListener('click', discard);
+      cancelButton.removeEventListener('click', cancel);
+      resolve(action);
+    };
+    const save = () => complete('save');
+    const discard = () => complete('discard');
+    const cancel = () => complete('cancel');
+    saveButton.addEventListener('click', save);
+    discardButton.addEventListener('click', discard);
+    cancelButton.addEventListener('click', cancel);
+  });
+}
+
+async function saveTab(tab: Tab): Promise<boolean> {
+  try {
+    const result = await window.fileSystem.writeFile(tab.filePath, tab.content);
+    if (!result.success) {
+      console.error('[SAVE] Failed to write file:', result.error || 'Unknown error');
+      showStatus('Save failed', 'error');
+      return false;
+    }
+
+    tab.isDirty = false;
+    const statsResult = await window.fileWatch.getFileStats(tab.filePath);
+    if (statsResult.success) {
+      tab.lastModified = statsResult.mtime;
+    }
+    return true;
+  } catch (error) {
+    console.error('[SAVE] Unexpected error while saving file:', error);
+    showStatus('Save error', 'error');
+    return false;
   }
 }
 
-function closeTab(index: number) {
-  const closingTab = tabs[index];
+async function prepareTabsForClose(tabsToClose: Tab[]): Promise<boolean> {
+  const action = await confirmClosingDirtyTabs(tabsToClose);
+  if (action === 'cancel') {
+    return false;
+  }
 
-  // Stop watching the file
-  if (closingTab?.filePath) {
-    window.fileWatch.unwatchFile(closingTab.filePath);
+  if (action === 'save') {
+    for (const tab of tabsToClose.filter(tab => tab.isDirty)) {
+      if (!await saveTab(tab)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+async function cleanupRemovedTabs(removedTabs: Tab[]): Promise<void> {
+  const removedDirs = new Set<string>();
+  await Promise.all(removedTabs.map(async tab => {
+    if (tab.filePath) {
+      removedDirs.add(fileDir(tab.filePath));
+      await window.fileWatch.unwatchFile(tab.filePath);
+    }
+  }));
+
+  await Promise.all(Array.from(removedDirs).map(dir => {
+    const stillInUse = tabs.some(tab => tab.filePath && fileDir(tab.filePath) === dir);
+    return stillInUse ? Promise.resolve() : window.protocolDirs.disallow(dir);
+  }));
+}
+
+async function closeTab(index: number) {
+  const closingTab = tabs[index];
+  if (!closingTab || !await prepareTabsForClose([closingTab])) {
+    return;
   }
 
   tabs.splice(index, 1);
-
-  // Revoke protocol access if no remaining tab uses the same directory
-  if (closingTab?.filePath) {
-    maybeDisallowProtocolDir(closingTab.filePath);
-  }
+  await cleanupRemovedTabs([closingTab]);
   
   if (tabs.length === 0) {
     clearActiveDocumentView();
@@ -2460,26 +2541,29 @@ function closeTab(index: number) {
   }
 }
 
-function closeAllTabs() {
-  // Stop watching all files and revoke protocol access for all dirs
-  const dirsToDisallow = new Set(tabs.filter(t => t.filePath).map(t => fileDir(t.filePath)));
-  tabs.forEach(tab => {
-    if (tab.filePath) {
-      window.fileWatch.unwatchFile(tab.filePath);
-    }
-  });
-  dirsToDisallow.forEach(dir => window.protocolDirs.disallow(dir));
+async function closeAllTabs() {
+  const tabsToClose = [...tabs];
+  if (!await prepareTabsForClose(tabsToClose)) {
+    return;
+  }
 
   tabs.splice(0, tabs.length);
+  await cleanupRemovedTabs(tabsToClose);
   clearActiveDocumentView();
   updateTabUI();
   saveSession(); // This will save an empty session, preventing unwanted restoration
 }
 
-function closeOthers(index: number) {
+async function closeOthers(index: number) {
   const keep = tabs[index];
   if (!keep) return;
+  const tabsToClose = tabs.filter(tab => tab !== keep);
+  if (!await prepareTabsForClose(tabsToClose)) {
+    return;
+  }
+
   tabs.splice(0, tabs.length, keep);
+  await cleanupRemovedTabs(tabsToClose);
   activeTabIndex = 0;
   renderTab(0);
   updateTabUI();
@@ -2562,26 +2646,9 @@ async function saveActiveTab() {
     return;
   }
 
-  try {
-    const result = await window.fileSystem.writeFile(tab.filePath, tab.content);
-    if (!result.success) {
-      console.error('[SAVE] Failed to write file:', result.error || 'Unknown error');
-      showStatus('Save failed', 'error');
-    } else {
-      tab.isDirty = false;
-      
-      // Update last modified time after save
-      const statsResult = await window.fileWatch.getFileStats(tab.filePath);
-      if (statsResult.success) {
-        tab.lastModified = statsResult.mtime;
-      }
-      
-      updateTabUI();
-      showStatus('Saved', 'success');
-    }
-  } catch (error) {
-    console.error('[SAVE] Unexpected error while saving file:', error);
-    showStatus('Save error', 'error');
+  if (await saveTab(tab)) {
+    updateTabUI();
+    showStatus('Saved', 'success');
   }
 }
 function showStatus(message: string, type: 'success' | 'error' | 'saving') {
