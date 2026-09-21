@@ -100,7 +100,7 @@ let sessionSaveHandle: number | null = null;
 let currentThemeBaseFontSize = '16px';
 let renderGeneration = 0;
 
-type PageSizePreset = 'A4' | 'Letter' | 'Legal' | 'Custom';
+type PageSizePreset = 'A4' | 'A3' | 'Letter' | 'Legal' | 'Custom';
 
 interface PageSettings {
   size: PageSizePreset;
@@ -828,19 +828,25 @@ function mmToIn(mm: number) {
   return mm / 25.4;
 }
 
+const pagePresetDimensionsMm: Record<Exclude<PageSizePreset, 'Custom'>, { w: number; h: number }> = {
+  A4: { w: 210, h: 297 },
+  A3: { w: 297, h: 420 },
+  Letter: { w: 216, h: 279 },
+  Legal: { w: 216, h: 356 },
+};
+
+function pageDimensionsMm(settings: PageSettings) {
+  const { w, h } = settings.size === 'Custom'
+    ? { w: settings.customWidthMm, h: settings.customHeightMm }
+    : pagePresetDimensionsMm[settings.size];
+  return settings.orientation === 'portrait' ? { w, h } : { w: h, h: w };
+}
+
 function pageSettingsToInches(ps: PageSettings) {
-  const presetDimensionsMm: Record<PageSizePreset, { w: number; h: number }> = {
-    A4: { w: 210, h: 297 },
-    Letter: { w: 216, h: 279 },
-    Legal: { w: 216, h: 356 },
-    Custom: { w: ps.customWidthMm, h: ps.customHeightMm },
-  };
-  const { w, h } = presetDimensionsMm[ps.size];
-  const width = ps.orientation === 'portrait' ? w : h;
-  const height = ps.orientation === 'portrait' ? h : w;
+  const { w, h } = pageDimensionsMm(ps);
   return {
-    widthIn: mmToIn(width),
-    heightIn: mmToIn(height),
+    widthIn: mmToIn(w),
+    heightIn: mmToIn(h),
     marginsIn: {
       top: mmToIn(ps.marginsMm.top),
       bottom: mmToIn(ps.marginsMm.bottom),
@@ -865,12 +871,7 @@ function applyPageView(settings: PageSettings) {
     clearPageBreakMarkers();
     return;
   }
-  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
-    settings.size === 'Letter' ? { w: 216, h: 279 } :
-    settings.size === 'Legal' ? { w: 216, h: 356 } :
-    { w: settings.customWidthMm, h: settings.customHeightMm };
-  const w = settings.orientation === 'portrait' ? presetMm.w : presetMm.h;
-  const h = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const { w, h } = pageDimensionsMm(settings);
   const dpi = 96;
   const widthPx = mmToIn(w) * dpi;
   const paddingTop = mmToIn(settings.marginsMm.top) * dpi;
@@ -909,11 +910,7 @@ function clearPageBreakMarkers() {
 function renderPageGuides(settings: PageSettings, content: HTMLElement, pageWidthPx: number, paddingTopPx: number, paddingBottomPx: number) {
   clearPageGuides();
   const dpi = 96;
-  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
-    settings.size === 'Letter' ? { w: 216, h: 279 } :
-    settings.size === 'Legal' ? { w: 216, h: 356 } :
-    { w: settings.customWidthMm, h: settings.customHeightMm };
-  const hMm = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const { h: hMm } = pageDimensionsMm(settings);
   const pageHeightPx = mmToIn(hMm) * dpi;
   const usableHeightPx = pageHeightPx - paddingTopPx - paddingBottomPx;
   if (usableHeightPx <= 0) return;
@@ -936,11 +933,7 @@ function computePageBreaks(settings: PageSettings) {
   const content = document.getElementById('markdown-content');
   if (!content) return;
   clearPageBreakMarkers();
-  const presetMm = settings.size === 'A4' ? { w: 210, h: 297 } :
-    settings.size === 'Letter' ? { w: 216, h: 279 } :
-    settings.size === 'Legal' ? { w: 216, h: 356 } :
-    { w: settings.customWidthMm, h: settings.customHeightMm };
-  const hMm = settings.orientation === 'portrait' ? presetMm.h : presetMm.w;
+  const { h: hMm } = pageDimensionsMm(settings);
   const dpi = 96;
   const pageHeightPx = mmToIn(hMm) * dpi;
   const paddingTopPx = mmToIn(settings.marginsMm.top) * dpi;
@@ -1090,7 +1083,6 @@ function scheduleReflow() {
     const ps = loadPageSettings();
     if (ps.pageView) {
       applyPageView(ps);
-      computePageBreaks(ps);
     }
   }, 150);
 }
@@ -1756,18 +1748,10 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   }
   if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
   
-  // Apply page view and recompute breaks after all rendering is settled
-  const psAfterRender = loadPageSettings();
-  if (psAfterRender.pageView) {
-    applyPageView(psAfterRender);
-    computePageBreaks(psAfterRender);
-  }
-  
-  // Apply page view and compute pagination after all rendering/MathJax
-  const ps = loadPageSettings();
-  if (ps.pageView) {
-    applyPageView(ps);
-    computePageBreaks(ps);
+  // Apply page view after all asynchronous rendering has settled.
+  const pageSettings = loadPageSettings();
+  if (pageSettings.pageView) {
+    applyPageView(pageSettings);
   }
   
   // Reapply the active theme after async rendering adds/replaces content.

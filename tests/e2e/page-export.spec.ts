@@ -151,6 +151,25 @@ test('page settings are saved to localStorage', async () => {
   expect(stored).not.toBeNull();
 });
 
+test('A3 page view uses the documented A3 width', async () => {
+  await page.locator('#page-settings-btn').click();
+  await page.locator('#page-size-select').selectOption('A3');
+
+  const pageViewToggle = page.locator('#page-view-toggle');
+  if (!await pageViewToggle.isChecked()) {
+    await pageViewToggle.check();
+  }
+  await page.locator('#page-settings-save').click();
+
+  const maxWidth = await page.locator('#markdown-content').evaluate(
+    element => parseFloat((element as HTMLElement).style.maxWidth),
+  );
+  expect(maxWidth).toBeCloseTo((297 / 25.4) * 96, 1);
+
+  const stored = await page.evaluate(() => localStorage.getItem('pageSettings'));
+  expect(JSON.parse(stored!)).toMatchObject({ size: 'A3', pageView: true });
+});
+
 // ── PDF export ─────────────────────────────────────────────────────────────
 
 test('menu export writes a non-empty PDF file', async () => {
