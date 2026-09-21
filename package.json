@@ -18,11 +18,11 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
-    "test:e2e": "npm run build && playwright test",
-    "test:e2e:dev": "playwright test",
-    "test:update-snapshots": "playwright test --update-snapshots",
-    "test:ui": "playwright test --ui",
-    "test:headed": "playwright test --headed"
+    "test:e2e": "npm run pack && playwright test",
+    "test:e2e:dev": "npm run pack && playwright test",
+    "test:update-snapshots": "npm run pack && playwright test --update-snapshots",
+    "test:ui": "npm run pack && playwright test --ui",
+    "test:headed": "npm run pack && playwright test --headed"
   },
   "keywords": [
     "markdown",

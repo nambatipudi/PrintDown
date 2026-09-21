@@ -665,11 +665,13 @@ ipcMain.handle('save-session', (_event, session: SessionData) => {
 ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, pageSettings?: { pageSize?: { width: number; height: number }; margins?: { top: number; bottom: number; left: number; right: number }; orientation?: 'portrait' | 'landscape'; pageView?: boolean; }) => {
   if (!mainWindow) return null;
   
-  // Show save dialog first
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: filePath.replace(/\.(md|markdown)$/, '.pdf'),
-    filters: [{ name: 'PDF', extensions: ['pdf'] }]
-  });
+  const testExportPath = process.env.PLAYWRIGHT_TEST_PDF_PATH;
+  const result = testExportPath
+    ? { canceled: false, filePath: testExportPath }
+    : await dialog.showSaveDialog(mainWindow, {
+      defaultPath: filePath.replace(/\.(md|markdown)$/, '.pdf'),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
 
   if (result.canceled || !result.filePath) {
     return null;
@@ -1080,15 +1082,17 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, p
         throw new Error('PDF file is empty');
       }
       
-      // Now open the PDF with the default PDF viewer
-      console.log('[PDF] Opening PDF file:', savePath);
-      const error = await shell.openPath(savePath);
-      
-      if (error) {
-        console.error('Failed to open PDF:', error);
-        // Still return success since the PDF was created, just couldn't open it
-      } else {
-        console.log('PDF opened successfully:', savePath);
+      if (!process.env.PLAYWRIGHT_TEST) {
+        // Now open the PDF with the default PDF viewer
+        console.log('[PDF] Opening PDF file:', savePath);
+        const error = await shell.openPath(savePath);
+
+        if (error) {
+          console.error('Failed to open PDF:', error);
+          // Still return success since the PDF was created, just couldn't open it
+        } else {
+          console.log('PDF opened successfully:', savePath);
+        }
       }
       
     } catch (writeError) {

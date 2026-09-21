@@ -4,13 +4,25 @@
  * page view toggle, persistence, PDF export trigger.
  */
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { launchApp, openAndWait } from './helpers/app';
+import { launchApp, openAndWait, sendMenuEvent } from './helpers/app';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 let app: ElectronApplication;
 let page: Page;
+let exportDirectory: string;
+let exportPath: string;
 
-test.beforeAll(async () => { ({ app, page } = await launchApp()); });
-test.afterAll(async () => { await app.close(); });
+test.beforeAll(async () => {
+  exportDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'printdown-pdf-export-'));
+  exportPath = path.join(exportDirectory, 'document.pdf');
+  ({ app, page } = await launchApp({ pdfExportPath: exportPath }));
+});
+test.afterAll(async () => {
+  await app.close();
+  fs.rmSync(exportDirectory, { recursive: true, force: true });
+});
 
 test.beforeEach(async () => {
   await openAndWait(app, page, 'markdown-basics.md');
@@ -139,24 +151,13 @@ test('page settings are saved to localStorage', async () => {
   expect(stored).not.toBeNull();
 });
 
-// ── PDF export trigger ─────────────────────────────────────────────────────
+// ── PDF export ─────────────────────────────────────────────────────────────
 
-test('PDF export dialog is triggered by menu-export-pdf event', async () => {
-  // We can't easily verify the actual PDF file, but we can verify
-  // the export pipeline doesn't crash the renderer
-  let dialogShown = false;
-  page.once('dialog', async (dialog) => {
-    dialogShown = true;
-    await dialog.dismiss();
-  });
+test('menu export writes a non-empty PDF file', async () => {
+  await sendMenuEvent(app, 'menu-export-pdf');
 
-  // Trigger export - this opens a native save dialog which Playwright can intercept
-  await page.evaluate(() => {
-    // The export is triggered via IPC, but if it shows a dialog we handle it
-    window.dispatchEvent(new CustomEvent('test-export-check'));
-  });
-
-  // The main way to test PDF export without a file picker is to verify
-  // the renderer doesn't crash and content stays rendered
-  await expect(page.locator('#markdown-content h1').first()).toBeVisible();
+  await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+  const pdf = fs.readFileSync(exportPath);
+  expect(pdf.length).toBeGreaterThan(0);
+  expect(pdf.subarray(0, 5).toString('ascii')).toBe('%PDF-');
 });

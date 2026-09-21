@@ -28,7 +28,13 @@ function findPackagedBinary(): string {
  *  restore tests), PLAYWRIGHT_TEST_USERDATA is set so main.ts uses this dir instead of
  *  creating a fresh tmpdir per PID. */
 export async function launchApp(
-  { userDataDir }: { userDataDir?: string } = {},
+  {
+    userDataDir,
+    pdfExportPath,
+  }: {
+    userDataDir?: string;
+    pdfExportPath?: string;
+  } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const executablePath = findPackagedBinary();
   const env: Record<string, string> = {
@@ -37,6 +43,7 @@ export async function launchApp(
     PLAYWRIGHT_TEST: '1',
   };
   if (userDataDir) env.PLAYWRIGHT_TEST_USERDATA = userDataDir;
+  if (pdfExportPath) env.PLAYWRIGHT_TEST_PDF_PATH = pdfExportPath;
   const app = await electron.launch({ executablePath, env });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
