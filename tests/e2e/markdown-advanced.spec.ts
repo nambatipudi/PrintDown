@@ -4,7 +4,7 @@
  * smart quotes, task lists, nested blockquotes.
  */
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { launchApp, openAndWait } from './helpers/app';
+import { createTempMd, launchApp, openAndWait, openFile, removeTempMd, waitForContent } from './helpers/app';
 
 let app: ElectronApplication;
 let page: Page;
@@ -34,6 +34,30 @@ test.describe('inline HTML passthrough', () => {
     await expect(summary).toBeVisible();
     await summary.click();
     await page.waitForTimeout(200);
+  });
+
+  test('removes executable markup while retaining safe inline HTML', async () => {
+    const filePath = createTempMd([
+      '# Sanitization',
+      '<div id="safe-html">Safe content</div>',
+      '<script id="script-payload">window.__xss = true</script>',
+      '<img id="event-payload" src="invalid" onerror="window.__xss = true">',
+      '<a id="uri-payload" href="javascript:window.__xss = true">Unsafe link</a>',
+    ].join('\n'), 'sanitization');
+
+    try {
+      await openFile(app, filePath);
+      await waitForContent(page);
+
+      await expect(page.locator('#markdown-content #safe-html')).toBeVisible();
+      await expect(page.locator('#markdown-content #script-payload')).toHaveCount(0);
+      await expect(page.locator('#markdown-content #event-payload')).not.toHaveAttribute('onerror');
+      await expect(page.locator('#markdown-content #uri-payload')).not.toHaveAttribute('href', /^javascript:/i);
+      await expect.poll(() => page.evaluate(() => (window as typeof window & { __xss?: boolean }).__xss))
+        .not.toBe(true);
+    } finally {
+      removeTempMd(filePath);
+    }
   });
 });
 

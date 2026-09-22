@@ -46,7 +46,16 @@ module.exports = (_env, argv) => {
       new HtmlWebpackPlugin({template: './src/index.html'}),
       new CopyWebpackPlugin({
         patterns: [
-          { from: 'src/vendor', to: 'vendor' }
+          // Sourced from the pinned packages so the shipped bundles always match
+          // the audited dependency versions instead of drifting from checked-in copies.
+          {
+            from: require.resolve('mermaid/dist/mermaid.min.js'),
+            to: 'vendor/mermaid.min.js'
+          },
+          {
+            from: require.resolve('mathjax/es5/tex-svg.js'),
+            to: 'vendor/mathjax-tex-svg.js'
+          }
         ]
       })
     ],

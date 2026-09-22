@@ -1900,13 +1900,6 @@ async function waitForRenderingComplete(): Promise<void> {
     }
   }
   
-  // Wait for UML sequence diagrams to settle
-  // These use Raphael.js which is synchronous, but give them a moment
-  const umlElements = document.querySelectorAll('.sequence-diagram');
-  if (umlElements.length > 0) {
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-  
   // Wait for Draw.io diagrams to render (SVG-based, synchronous but give rendering time)
   const drawioElements = document.querySelectorAll('.drawio-svg-container');
   if (drawioElements.length > 0) {

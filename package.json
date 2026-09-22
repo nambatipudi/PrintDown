@@ -67,13 +67,11 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.7",
     "@maxgraph/core": "^0.23.0",
-    "dompurify": "^3.2.6",
-    "markdown-it": "^14.1.0",
+    "dompurify": "^3.4.15",
+    "markdown-it": "^14.3.2",
     "markdown-it-texmath": "^1.0.0",
     "mathjax": "^3.2.2",
-    "mermaid": "^11.12.1",
-    "raphael": "^2.3.0",
-    "underscore": "^1.13.7"
+    "mermaid": "^11.17.2"
   },
   "build": {
     "appId": "com.printdown.app",
@@ -157,5 +155,8 @@
       "category": "Office",
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
     }
+  },
+  "overrides": {
+    "uuid": "14.0.2"
   }
 }
