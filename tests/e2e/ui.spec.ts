@@ -22,11 +22,16 @@ test.afterAll(async () => {
 
 test('app launches and shows empty state', async () => {
   await expect(page.locator('.empty-state')).toBeVisible();
+  await expect(page.locator('.empty-state h1')).toHaveText('Read Markdown beautifully');
+  await expect(page.locator('#empty-open-file')).toBeVisible();
 });
 
 test('header buttons are visible on launch', async () => {
   await expect(page.locator('#toc-toggle')).toBeVisible();
   await expect(page.locator('#edit-toggle')).toBeVisible();
+  await expect(page.locator('.app-brand-name')).toHaveText('PrintDown');
+  await expect(page.locator('#toc-toggle')).toHaveAttribute('aria-label', 'Toggle table of contents');
+  await expect(page.locator('#edit-toggle')).toHaveAttribute('aria-pressed', 'false');
 });
 
 // ── Tab management ─────────────────────────────────────────────────────────
@@ -57,6 +62,19 @@ test.describe('tabs', () => {
     await expect(page.locator('#markdown-content')).toBeVisible();
     await expect(page.locator('.empty-state')).not.toBeVisible();
   });
+
+  test('reading view uses a centered editorial measure', async () => {
+    const measure = await page.locator('#markdown-content').evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        maxWidth: parseFloat(style.maxWidth),
+        left: element.getBoundingClientRect().left,
+        contentLeft: document.getElementById('content')!.getBoundingClientRect().left,
+      };
+    });
+    expect(measure.maxWidth).toBeCloseTo(860, 0);
+    expect(measure.left).toBeGreaterThan(measure.contentLeft);
+  });
 });
 
 // ── TOC sidebar ────────────────────────────────────────────────────────────
@@ -79,10 +97,12 @@ test.describe('table of contents', () => {
 
     const newClass = await sidebar.getAttribute('class') ?? '';
     expect(newClass).not.toBe(initialClass);
+    await expect(page.locator('#toc-toggle')).toHaveAttribute('aria-expanded', 'true');
 
     // Toggle back to restore state
     await page.locator('#toc-toggle').click();
     await page.waitForTimeout(400);
+    await expect(page.locator('#toc-toggle')).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('TOC content is populated for file with headings', async () => {
@@ -123,9 +143,11 @@ test.describe('edit mode', () => {
     await page.locator('#edit-toggle').click();
     await page.waitForTimeout(300);
     await expect(page.locator('#editor-pane')).toBeVisible();
+    await expect(page.locator('#edit-toggle')).toHaveAttribute('aria-pressed', 'true');
     // Restore
     await page.locator('#edit-toggle').click();
     await page.waitForTimeout(300);
+    await expect(page.locator('#edit-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('content area remains visible in edit mode', async () => {

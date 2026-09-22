@@ -60,6 +60,17 @@ test('clicking a different tab changes displayed content', async () => {
   await expect(page.locator('#markdown-content h1').first()).toBeVisible();
 });
 
+test('switching documents resets the reader scroll position', async () => {
+  await openAndWait(app, page, 'toc-long.md');
+  await page.locator('#content').evaluate(element => {
+    element.scrollTop = 500;
+  });
+  await expect.poll(() => page.locator('#content').evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+
+  await openAndWait(app, page, 'math-equations.md');
+  await expect.poll(() => page.locator('#content').evaluate(element => element.scrollTop)).toBe(0);
+});
+
 // ── Tab context menu ───────────────────────────────────────────────────────
 
 test('right-clicking a tab shows the context menu', async () => {

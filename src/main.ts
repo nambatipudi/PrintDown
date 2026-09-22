@@ -282,6 +282,42 @@ function createWindow() {
               click: () => mainWindow?.webContents.send('menu-theme-change', 'academic')
             },
             {
+              label: 'Modern Slate',
+              type: 'radio',
+              checked: currentTheme === 'modern-slate',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'modern-slate')
+            },
+            {
+              label: 'Modern Sage',
+              type: 'radio',
+              checked: currentTheme === 'modern-sage',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'modern-sage')
+            },
+            {
+              label: 'Modern Rose',
+              type: 'radio',
+              checked: currentTheme === 'modern-rose',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'modern-rose')
+            },
+            {
+              label: 'Retro Amber',
+              type: 'radio',
+              checked: currentTheme === 'retro-amber',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'retro-amber')
+            },
+            {
+              label: 'Retro Sunset',
+              type: 'radio',
+              checked: currentTheme === 'retro-sunset',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'retro-sunset')
+            },
+            {
+              label: 'Retro Pixel',
+              type: 'radio',
+              checked: currentTheme === 'retro-pixel',
+              click: () => mainWindow?.webContents.send('menu-theme-change', 'retro-pixel')
+            },
+            {
               label: 'Print Classic',
               type: 'radio',
               checked: currentTheme === 'print-classic',

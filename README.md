@@ -54,18 +54,18 @@ Click the **✎** button (or use the toolbar) to split the window into an editor
 
 ### Themes
 
-**View → Theme** offers 22 themes:
+**View → Theme** offers 28 themes:
 
-| General use | Print-optimized |
-|-------------|-----------------|
-| Dark, Light, Sepia, Nord | Print Classic |
-| Dracula, Monokai, GitHub | Print Modern |
-| Oceanic, Terminal, Forest | Print Elegant |
-| Literary, Newspaper, Academic | Print Technical |
-| Minimal, Cyberpunk, Solarized Light | Print Report |
-| | Print Minimalist |
+| General use | Curated palettes | Print-optimized |
+|-------------|------------------|-----------------|
+| Dark, Light, Sepia, Nord | Modern Slate, Modern Sage | Print Classic |
+| Dracula, Monokai, GitHub | Modern Rose, Retro Amber | Print Modern |
+| Oceanic, Terminal, Forest | Retro Sunset, Retro Pixel | Print Elegant |
+| Literary, Newspaper, Academic | | Print Technical |
+| Minimal, Cyberpunk, Solarized Light | | Print Report |
+| | | Print Minimalist |
 
-The six print-optimized themes are designed for clean PDF output with professional typography.
+The six print-optimized themes are designed for clean PDF output with professional typography. The modern palettes use neutral surfaces with a single accent hue to preserve hierarchy and reading contrast. The retro palettes use deliberately limited amber, sunset, and phosphor-inspired colors rather than saturating the whole page; body and code text remain high-contrast for long reading sessions.
 
 ### Font Size
 

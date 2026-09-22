@@ -105,6 +105,13 @@ test('enabling page view adds .page-view-active to #content', async () => {
     await checkbox.click();
     await page.waitForTimeout(300);
     await expect(page.locator('#content')).toHaveClass(/page-view-active/);
+    const canvasColor = await page.locator('#content').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    );
+    const paperColor = await page.locator('#markdown-content').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    );
+    expect(canvasColor).not.toBe(paperColor);
     // Toggle back off
     await checkbox.click();
     await page.waitForTimeout(300);

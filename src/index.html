@@ -858,21 +858,224 @@
       page-break-before: always;
     }
 
+    /* Document-first application shell */
+    :root {
+      --app-surface: #202124;
+      --app-surface-raised: #292a2e;
+      --app-border: rgba(255, 255, 255, 0.1);
+      --app-text: #f2f3f5;
+      --app-text-muted: #a7abb3;
+      --app-accent: #6ca6ff;
+      --app-focus: #8ab4f8;
+      --reading-measure: 860px;
+    }
+
+    body {
+      background: var(--app-surface);
+      color: var(--app-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button:focus-visible,
+    .tab:focus-visible {
+      outline: 2px solid var(--app-focus);
+      outline-offset: 2px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      min-height: 48px;
+      padding: 0 12px;
+      gap: 4px;
+      background: var(--app-surface-raised);
+      border-bottom: 1px solid var(--app-border);
+    }
+
+    .app-brand {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 0 12px 0 4px;
+      white-space: nowrap;
+    }
+
+    .app-brand-name {
+      color: var(--app-text);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .app-brand-detail {
+      color: var(--app-text-muted);
+      font-size: 12px;
+    }
+
+    .toolbar-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .toolbar-action-label {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .toc-toggle,
+    .edit-toggle {
+      margin-right: 0;
+      border-color: transparent;
+      background: transparent;
+      color: var(--app-text-muted);
+      border-radius: 6px;
+    }
+
+    .toc-toggle:hover,
+    .edit-toggle:hover,
+    .toc-toggle.active,
+    .edit-toggle.active {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--app-text);
+    }
+
+    .edit-toggle.active {
+      background: rgba(108, 166, 255, 0.2);
+      color: #c8dcff;
+    }
+
+    .tabs {
+      margin-left: 8px;
+      background: transparent;
+    }
+
+    .tab {
+      border-right: 0;
+      border-radius: 6px 6px 0 0;
+      margin: 8px 2px 0;
+      padding: 9px 14px;
+      background: transparent;
+      color: var(--app-text-muted);
+    }
+
+    .tab.active {
+      background: var(--theme-content, #1e1e1e);
+      color: var(--theme-text, #fff);
+      box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .tab:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--app-text);
+    }
+
+    .tab-scroll-btn {
+      background: transparent;
+      color: var(--app-text-muted);
+      border-radius: 4px;
+    }
+
+    .tab-scroll-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    #status-indicator {
+      font-family: inherit;
+      color: var(--app-text-muted);
+      background: transparent;
+    }
+
+    #content {
+      padding: 32px 40px 56px;
+    }
+
+    #markdown-content {
+      width: min(100%, var(--reading-measure));
+      max-width: var(--reading-measure);
+      margin: 0 auto;
+    }
+
+    #content.page-view-active {
+      background-color: #161719 !important;
+      background-image: radial-gradient(rgba(255, 255, 255, 0.06) 0.7px, transparent 0.7px);
+      background-size: 8px 8px;
+      padding: 40px;
+    }
+
+    #markdown-content.page-view {
+      margin-bottom: 40px;
+      border-radius: 2px;
+      box-shadow: 0 1px 1px rgba(0, 0, 0, 0.14), 0 16px 40px rgba(0, 0, 0, 0.28);
+    }
+
+    .empty-state {
+      flex-direction: column;
+      gap: 12px;
+      text-align: center;
+      color: var(--app-text-muted);
+    }
+
+    .empty-state h1 {
+      color: var(--app-text);
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+
+    .empty-state p {
+      max-width: 400px;
+      line-height: 1.55;
+    }
+
+    .empty-state .open-file-button {
+      margin-top: 4px;
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--app-accent);
+      color: #10213b;
+      font-weight: 700;
+    }
+
+    .empty-state .shortcut-hint {
+      font-size: 12px;
+      color: var(--app-text-muted);
+    }
+
+    @media (max-width: 900px) {
+      .app-brand-detail,
+      .toolbar-action-label {
+        display: none;
+      }
+
+      #content {
+        padding: 24px;
+      }
+    }
+
   </style>
 </head>
 <body>
   <div class="header">
-    <button class="toc-toggle" id="toc-toggle" title="Toggle Table of Contents">
+    <div class="app-brand" aria-label="PrintDown">
+      <span class="app-brand-name">PrintDown</span>
+      <span class="app-brand-detail">Markdown reader</span>
+    </div>
+    <button class="toc-toggle toolbar-action" id="toc-toggle" title="Toggle Table of Contents" aria-label="Toggle table of contents" aria-expanded="false">
       <span class="toc-icon">☰</span>
+      <span class="toolbar-action-label">Contents</span>
     </button>
-    <button class="edit-toggle" id="edit-toggle" title="Toggle Edit Mode">
+    <button class="edit-toggle toolbar-action" id="edit-toggle" title="Toggle Edit Mode" aria-label="Toggle edit mode" aria-pressed="false">
       <span class="edit-icon">✎</span>
+      <span class="toolbar-action-label">Edit</span>
     </button>
-    <button class="toc-toggle" id="refresh-toggle" title="Refresh Current File">
+    <button class="toc-toggle toolbar-action" id="refresh-toggle" title="Refresh Current File" aria-label="Refresh current file">
       <span class="toc-icon">↻</span>
+      <span class="toolbar-action-label">Refresh</span>
     </button>
-    <button class="toc-toggle" id="page-settings-btn" title="Page setup">
+    <button class="toc-toggle toolbar-action" id="page-settings-btn" title="Page setup" aria-label="Open page setup">
       <span class="toc-icon">📄</span>
+      <span class="toolbar-action-label">Page setup</span>
     </button>
     <button class="tab-scroll-btn tab-scroll-left" id="tab-scroll-left" title="Scroll tabs left">
       ‹
@@ -899,7 +1102,12 @@
       </div>
       <div class="splitter" id="splitter" style="display: none;"></div>
       <div id="content" class="viewer-pane">
-        <div class="empty-state">Open a Markdown file to begin</div>
+        <div class="empty-state">
+          <h1>Read Markdown beautifully</h1>
+          <p>Open a document to preview diagrams, math, and print-ready pages entirely offline.</p>
+          <button class="open-file-button" id="empty-open-file">Open Markdown file</button>
+          <span class="shortcut-hint">or press Cmd/Ctrl + O</span>
+        </div>
         <div id="markdown-content" style="display: none;"></div>
       </div>
     </div>

@@ -574,6 +574,105 @@ const themes = {
     fontSize: '17px',
     lineHeight: '1.8'
   },
+  // Modern palettes use a restrained neutral surface plus one high-chroma accent.
+  // Text colors are selected for readable contrast against their corresponding surface.
+  'modern-slate': {
+    body: '#0f172a',
+    content: '#111c32',
+    text: '#e2e8f0',
+    heading: '#93c5fd',
+    link: '#67e8f9',
+    codeBg: '#1e293b',
+    codeText: '#bfdbfe',
+    quoteBg: '#172554',
+    quoteBorder: '#60a5fa',
+    quoteText: '#dbeafe',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    codeFontFamily: '"SF Mono", "Menlo", "Consolas", monospace',
+    fontSize: '16px',
+    lineHeight: '1.7'
+  },
+  'modern-sage': {
+    body: '#eef3ee',
+    content: '#fbfdfb',
+    text: '#1f2933',
+    heading: '#245c4a',
+    link: '#0f766e',
+    codeBg: '#e6efe8',
+    codeText: '#166534',
+    quoteBg: '#edf7f0',
+    quoteBorder: '#3b8c6e',
+    quoteText: '#285943',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    codeFontFamily: '"SF Mono", "Menlo", "Consolas", monospace',
+    fontSize: '16px',
+    lineHeight: '1.7'
+  },
+  'modern-rose': {
+    body: '#24151d',
+    content: '#321b28',
+    text: '#ffe4ed',
+    heading: '#fda4af',
+    link: '#f9a8d4',
+    codeBg: '#4a2636',
+    codeText: '#fecdd3',
+    quoteBg: '#452238',
+    quoteBorder: '#fb7185',
+    quoteText: '#ffe4e6',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    codeFontFamily: '"SF Mono", "Menlo", "Consolas", monospace',
+    fontSize: '16px',
+    lineHeight: '1.7'
+  },
+  // Retro palettes borrow from phosphor terminals, warm print inks, and 8-bit displays.
+  'retro-amber': {
+    body: '#17130d',
+    content: '#241d12',
+    text: '#f6e7c1',
+    heading: '#f2b84b',
+    link: '#ffcf70',
+    codeBg: '#352918',
+    codeText: '#ffd98a',
+    quoteBg: '#302315',
+    quoteBorder: '#d99024',
+    quoteText: '#f2d79f',
+    fontFamily: '"Courier New", "IBM Plex Mono", monospace',
+    codeFontFamily: '"Courier New", "IBM Plex Mono", monospace',
+    fontSize: '15px',
+    lineHeight: '1.65'
+  },
+  'retro-sunset': {
+    body: '#f7e5d1',
+    content: '#fff8ef',
+    text: '#3a2430',
+    heading: '#c2415a',
+    link: '#b45309',
+    codeBg: '#fce1c3',
+    codeText: '#9a3412',
+    quoteBg: '#f8d9c8',
+    quoteBorder: '#d85c70',
+    quoteText: '#6b3142',
+    fontFamily: '"Georgia", "Trebuchet MS", serif',
+    codeFontFamily: '"Courier New", monospace',
+    fontSize: '17px',
+    lineHeight: '1.75'
+  },
+  'retro-pixel': {
+    body: '#101820',
+    content: '#16242b',
+    text: '#d9f0e8',
+    heading: '#ff6b6b',
+    link: '#4dd0e1',
+    codeBg: '#243b43',
+    codeText: '#a7f3d0',
+    quoteBg: '#1d333b',
+    quoteBorder: '#f59e0b',
+    quoteText: '#c7e8df',
+    fontFamily: '"Trebuchet MS", "Arial", sans-serif',
+    codeFontFamily: '"Courier New", monospace',
+    fontSize: '16px',
+    lineHeight: '1.65'
+  },
   'print-classic': {
     body: '#ffffff',
     content: '#ffffff',
@@ -765,7 +864,10 @@ function applyTheme(themeName: keyof typeof themes) {
   });
   
   // Reinitialize Mermaid with appropriate theme
-  const isDarkTheme = ['dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest'].includes(themeName);
+  const isDarkTheme = [
+    'dark', 'nord', 'dracula', 'monokai', 'terminal', 'oceanic', 'cyberpunk', 'forest',
+    'modern-slate', 'modern-rose', 'retro-amber', 'retro-pixel'
+  ].includes(themeName);
   initMermaid(isDarkTheme, themeName, theme);
   
   // Save theme preference
@@ -882,7 +984,9 @@ function applyPageView(settings: PageSettings) {
   const paperBg = (viewerPane as HTMLElement | null)?.style.backgroundColor
     || getComputedStyle(document.documentElement).getPropertyValue('--page-paper-bg').trim()
     || '#ffffff';
-  if (viewerPane) viewerPane.style.backgroundColor = paperBg;
+  if (viewerPane) {
+    viewerPane.style.backgroundColor = '#161719';
+  }
   content.style.backgroundColor = paperBg;
   viewerPane?.classList.add('page-view-active');
   content.classList.add('page-view');
@@ -1581,6 +1685,7 @@ function setEditMode(enabled: boolean) {
     splitter.style.display = 'none';
   }
   editToggleButton?.classList.toggle('active', enabled);
+  editToggleButton?.setAttribute('aria-pressed', String(enabled));
 
   if (cmView) {
     refreshEditorFromTab();
@@ -1632,6 +1737,7 @@ interface RenderOptions {
 
 async function renderTab(index: number, options: RenderOptions = {}) {
   const renderId = ++renderGeneration;
+  const previousActiveTabIndex = activeTabIndex;
   activeTabIndex = index;
   const tab = tabs[index];
   
@@ -1639,6 +1745,9 @@ async function renderTab(index: number, options: RenderOptions = {}) {
 
   const contentDiv = document.getElementById('markdown-content')!;
   const emptyState = document.querySelector('.empty-state') as HTMLElement;
+  if (index !== previousActiveTabIndex) {
+    document.getElementById('content')?.scrollTo({ top: 0, left: 0 });
+  }
   
   // Extract frontmatter macros (optional) and strip it from the rendered body
   const { body: markdownBodyRaw, macros } = extractFrontmatter(tab.content);
@@ -1947,6 +2056,7 @@ function toggleTOC() {
   
   // Save TOC state
   const isOpen = sidebar.classList.contains('open');
+  document.getElementById('toc-toggle')?.setAttribute('aria-expanded', String(isOpen));
   localStorage.setItem('tocOpen', isOpen.toString());
 }
 
@@ -1980,6 +2090,7 @@ function initializeTOC() {
     tocClose.addEventListener('click', () => {
       if (tocSidebar) {
         tocSidebar.classList.remove('open');
+        tocToggle?.setAttribute('aria-expanded', 'false');
         localStorage.setItem('tocOpen', 'false');
       }
     });
@@ -1989,6 +2100,7 @@ function initializeTOC() {
   const savedTOCState = localStorage.getItem('tocOpen');
   if (savedTOCState === 'true' && tocSidebar) {
     tocSidebar.classList.add('open');
+    tocToggle?.setAttribute('aria-expanded', 'true');
   }
   
   // Auto-update active TOC item on scroll
@@ -3420,6 +3532,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   refreshButton?.addEventListener('click', () => {
     refreshActiveFile();
+  });
+  document.getElementById('empty-open-file')?.addEventListener('click', () => {
+    openFile();
   });
   
   // Listen for external file changes

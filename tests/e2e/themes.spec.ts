@@ -60,6 +60,55 @@ test('--theme-code-bg CSS variable is set', async () => {
   expect(codeBg).not.toBe('');
 });
 
+const CURATED_THEMES = [
+  'modern-slate',
+  'modern-sage',
+  'modern-rose',
+  'retro-amber',
+  'retro-sunset',
+  'retro-pixel',
+] as const;
+
+for (const theme of CURATED_THEMES) {
+  test(`${theme} applies a complete readable palette`, async () => {
+    await switchTheme(theme);
+    const palette = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+        const luminance = (hex: string) => {
+          const channels = hex.match(/[0-9a-f]{2}/gi)?.map(channel => parseInt(channel, 16) / 255) ?? [];
+          const linear = channels.map(channel => channel <= 0.03928
+            ? channel / 12.92
+            : Math.pow((channel + 0.055) / 1.055, 2.4));
+          return (0.2126 * (linear[0] ?? 0)) + (0.7152 * (linear[1] ?? 0)) + (0.0722 * (linear[2] ?? 0));
+        };
+        const contrast = (foreground: string, background: string) => {
+          const foregroundLuminance = luminance(foreground);
+          const backgroundLuminance = luminance(background);
+          const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+          const darker = Math.min(foregroundLuminance, backgroundLuminance);
+          return (lighter + 0.05) / (darker + 0.05);
+        };
+        const body = root.getPropertyValue('--theme-body').trim();
+        const content = root.getPropertyValue('--theme-content').trim();
+        const text = root.getPropertyValue('--theme-text').trim();
+        return {
+          body,
+          content,
+          text,
+          heading: root.getPropertyValue('--theme-heading').trim(),
+          link: root.getPropertyValue('--theme-link').trim(),
+          code: root.getPropertyValue('--theme-code-text').trim(),
+          textContrast: contrast(text, content),
+        };
+      });
+    for (const value of Object.values(palette)) {
+      expect(value).not.toBe('');
+    }
+    expect(palette.textContrast).toBeGreaterThanOrEqual(4.5);
+    await expect(page.locator('#markdown-content h1').first()).toBeVisible();
+  });
+}
+
 // ── Themes render actual content correctly ────────────────────────────────
 
 test('content heading is visible after theme change', async () => {
