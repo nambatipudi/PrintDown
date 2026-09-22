@@ -26,9 +26,9 @@ Download the asset that matches your platform from the [Releases](https://github
 
 | Platform | File |
 |----------|------|
-| macOS (Apple Silicon) | `Print Down-x.x.x-mac-arm64.dmg` — open and drag to Applications |
-| Windows | `Print Down Setup x.x.x.exe` — run the installer when available |
-| Linux | `Print Down-x.x.x.AppImage` — make executable and run when available |
+| macOS (Apple Silicon) | `Print-Down-x.x.x-mac-arm64.dmg` — open and drag to Applications |
+| Windows | `Print-Down-Setup-x.x.x.exe` — run the installer when available |
+| Linux | `Print-Down-x.x.x.AppImage` — make executable and run when available |
 
 ---
 
