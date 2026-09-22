@@ -68,6 +68,16 @@ contextBridge.exposeInMainWorld('printExport', {
   }
 });
 
+contextBridge.exposeInMainWorld('headlessConversion', {
+  onStart: (callback: (filePath: string) => void) => {
+    ipcRenderer.removeAllListeners('headless-convert');
+    ipcRenderer.on('headless-convert', (_event, filePath: string) => callback(filePath));
+  },
+  complete: async (success: boolean, error?: string) => {
+    return await ipcRenderer.invoke('headless-conversion-complete', success, error);
+  }
+});
+
 // Expose menu event listeners
 contextBridge.exposeInMainWorld('menuEvents', {
   onMenuOpen: (callback: () => void) => {

@@ -145,6 +145,25 @@ Settings are saved per file and applied to PDF exports.
 
 For the cleanest output, switch to one of the **Print** themes before exporting.
 
+### Convert Markdown to PDF from Finder or Explorer
+
+PrintDown can create a PDF beside a Markdown file without opening the editor:
+
+```text
+notes.md -> notes.pdf
+```
+
+- **macOS:** the release DMG includes **Convert Markdown to PDF.workflow**. Open it once after moving Print Down to Applications, then select Markdown files in Finder and choose **Quick Actions -> Convert Markdown to PDF**.
+- **Windows:** the installer adds **Convert to PDF (Markdown)** to the Explorer context menu for `.md` and `.markdown` files.
+
+The conversion command is also available to automation:
+
+```bash
+"Print Down" --convert-to-pdf /path/to/notes.md
+```
+
+Existing PDFs are replaced only after a successful conversion. When multiple files are selected, each is converted independently.
+
 ### Page Settings
 
 Click the **📄** button in the toolbar to set paper size (**A4, A3, Letter, Legal, or Custom**), orientation, margins, and enable **Page View** — a paginated layout that shows how the document will break across pages before you export. The same dimension model is used by Page View, page guides, page breaks, and PDF export.

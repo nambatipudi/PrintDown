@@ -31,6 +31,10 @@ declare global {
     printExport: {
       exportPDF: (filePath: string, themeData?: any, pageSettings?: any) => Promise<string | null>;
     };
+    headlessConversion: {
+      onStart: (callback: (filePath: string) => void) => void;
+      complete: (success: boolean, error?: string) => Promise<void>;
+    };
     menuEvents: {
       onMenuOpen: (callback: () => void) => void;
       onMenuExportPDF: (callback: () => void) => void;
@@ -2739,7 +2743,7 @@ function showStatus(message: string, type: 'success' | 'error' | 'saving') {
   }
 }
 
-async function exportPDF() {
+async function exportPDF(): Promise<string | null> {
   if (activeTabIndex >= 0) {
     const tab = tabs[activeTabIndex];
     
@@ -2773,7 +2777,10 @@ async function exportPDF() {
     if (ps.pageView) {
       applyPageView(ps);
     }
+
+    return savePath;
   }
+  return null;
 }
 
 // Store console logs for debug copying with tab information
@@ -2956,6 +2963,18 @@ window.menuEvents.onMenuThemeChange((_event: any, theme: string) => {
 // TOC toggle menu event
 window.menuEvents.onMenuToggleTOC(() => {
   toggleTOC();
+});
+
+window.headlessConversion.onStart(async (filePath) => {
+  try {
+    await openFilePath(filePath);
+    const pdfPath = await exportPDF();
+    await window.headlessConversion.complete(!!pdfPath, pdfPath ? undefined : 'PDF export did not return a file path.');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[CONVERT] Headless conversion failed:', error);
+    await window.headlessConversion.complete(false, message);
+  }
 });
 
 // Handle files opened from system (double-click on .md file)

@@ -1,6 +1,6 @@
 {
   "name": "printdown",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "description": "Markdown viewer with MathJax rendering, PDF export, and printing",
   "main": "dist/main.js",
   "scripts": {
@@ -128,7 +128,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PrintDown"
+      "shortcutName": "PrintDown",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": [
@@ -144,7 +145,25 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
-      "title": "${productName} ${version}"
+      "title": "${productName} ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 420,
+          "type": "file",
+          "path": "macos/Convert Markdown to PDF.workflow"
+        }
+      ]
     },
     "linux": {
       "target": [

@@ -48,6 +48,9 @@ const store = new Store<{ session: SessionData }>();
 let mainWindow: BrowserWindow | null = null;
 let pendingFileToOpen: string | null = null;
 let currentTheme: string = 'dark'; // Track current theme
+let headlessConversionPath: string | null = null;
+let queuedHeadlessConversionPaths: string[] = [];
+let headlessConversionFailed = false;
 
 // File watchers: Map<filePath, FSWatcher>
 const fileWatchers = new Map<string, fs.FSWatcher>();
@@ -97,6 +100,31 @@ function isMarkdownFilePath(filePath: string): boolean {
   }
 }
 
+function parseHeadlessConversionPaths(args: string[]): string[] {
+  const argumentIndex = args.indexOf('--convert-to-pdf');
+  if (argumentIndex === -1) {
+    return [];
+  }
+  return args.slice(argumentIndex + 1)
+    .filter(isMarkdownFilePath)
+    .map(normalizeFilePath);
+}
+
+function outputPdfPath(markdownPath: string): string {
+  return markdownPath.replace(/\.(md|markdown)$/i, '.pdf');
+}
+
+queuedHeadlessConversionPaths = parseHeadlessConversionPaths(process.argv);
+headlessConversionPath = queuedHeadlessConversionPaths.shift() ?? null;
+
+function startNextHeadlessConversion(): void {
+  if (!mainWindow || !headlessConversionPath) {
+    return;
+  }
+  grantFileAccess(headlessConversionPath);
+  mainWindow.webContents.send('headless-convert', headlessConversionPath);
+}
+
 // Register custom protocol to serve local files for images
 try {
   protocol.registerSchemesAsPrivileged([
@@ -133,6 +161,7 @@ function createWindow() {
     ...(iconPath && { icon: iconPath }), // Only set icon for Windows/Linux
     backgroundColor: '#1e1e1e', // Set explicit background color to prevent white showing through
     titleBarStyle: 'default', // Ensure consistent title bar
+    show: !headlessConversionPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -141,6 +170,11 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  if (headlessConversionPath) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(startNextHeadlessConversion, 250);
+    });
+  }
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault();
   });
@@ -470,7 +504,7 @@ function createWindow() {
     try { store.clear(); } catch (_) { /* ignore */ }
     session = undefined;
   }
-  if (session && session.openFiles.length > 0) {
+  if (!headlessConversionPath && session && session.openFiles.length > 0) {
     session.openFiles = session.openFiles.filter(filePath => fs.existsSync(filePath));
     session.openFiles.forEach(grantFileAccess);
     mainWindow.webContents.on('did-finish-load', () => {
@@ -515,7 +549,7 @@ app.on('open-file', (event, filePath) => {
 });
 
 // Handle command line arguments (Windows)
-const gotTheLock = app.requestSingleInstanceLock();
+const gotTheLock = headlessConversionPath ? true : app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
@@ -721,6 +755,26 @@ ipcMain.handle('open-file-dialog', async (event) => {
   }
 });
 
+ipcMain.handle('headless-conversion-complete', async (event, success: boolean, error?: string) => {
+  if (!headlessConversionPath || !isTrustedAppSender(event)) {
+    return;
+  }
+
+  if (success) {
+    console.log(`[CONVERT] Created ${outputPdfPath(headlessConversionPath)}`);
+  } else {
+    console.error(`[CONVERT] Failed to convert ${headlessConversionPath}: ${error || 'Unknown error'}`);
+    headlessConversionFailed = true;
+  }
+
+  headlessConversionPath = queuedHeadlessConversionPaths.shift() ?? null;
+  if (headlessConversionPath) {
+    startNextHeadlessConversion();
+    return;
+  }
+  app.exit(headlessConversionFailed ? 1 : 0);
+});
+
 ipcMain.handle('read-file', async (event, filePath: string) => {
   if (!canAccessFile(event, filePath)) {
     return { success: false, error: 'Access denied' };
@@ -769,8 +823,9 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, p
   if (!mainWindow) return null;
   
   const testExportPath = process.env.PLAYWRIGHT_TEST_PDF_PATH;
-  const result = testExportPath
-    ? { canceled: false, filePath: testExportPath }
+  const automaticExportPath = testExportPath || (headlessConversionPath ? outputPdfPath(filePath) : undefined);
+  const result = automaticExportPath
+    ? { canceled: false, filePath: automaticExportPath }
     : await dialog.showSaveDialog(mainWindow, {
       defaultPath: filePath.replace(/\.(md|markdown)$/, '.pdf'),
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
@@ -1173,8 +1228,10 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, p
     } // end finally
 
     // Write PDF to file asynchronously with proper error handling
+    const temporaryPath = `${savePath}.${process.pid}.${Date.now()}.tmp`;
     try {
-      await fs.promises.writeFile(savePath, pdfData as any);
+      await fs.promises.writeFile(temporaryPath, pdfData as any);
+      await fs.promises.rename(temporaryPath, savePath);
       console.log('[PDF] File written successfully:', savePath);
       
       // Verify file was actually written and has correct size
@@ -1185,7 +1242,7 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, p
         throw new Error('PDF file is empty');
       }
       
-      if (!process.env.PLAYWRIGHT_TEST) {
+      if (!process.env.PLAYWRIGHT_TEST && !headlessConversionPath) {
         // Now open the PDF with the default PDF viewer
         console.log('[PDF] Opening PDF file:', savePath);
         const error = await shell.openPath(savePath);
@@ -1199,6 +1256,7 @@ ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, p
       }
       
     } catch (writeError) {
+      await fs.promises.rm(temporaryPath, { force: true });
       console.error('[PDF] Failed to write PDF file:', writeError);
       throw writeError;
     }

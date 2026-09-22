@@ -2,6 +2,18 @@
 
 All notable user-facing changes are documented in this file.
 
+## 1.7.7 - 2026-09-22
+
+### Added
+
+- Added a `--convert-to-pdf` command that converts one or more Markdown files without opening the editor and writes each PDF beside its source file.
+- Added the **Convert Markdown to PDF** Finder Quick Action to the macOS DMG.
+- Added the **Convert to PDF (Markdown)** context-menu command for `.md` and `.markdown` files in the Windows installer.
+
+### Changed
+
+- PDF conversion writes to a temporary sibling file and replaces an existing PDF only after conversion succeeds.
+
 ## 1.7.6 - 2026-09-22
 
 ### Security
