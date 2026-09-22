@@ -1,6 +1,6 @@
 # PrintDown
 
-A focused Markdown viewer and PDF exporter for desktop. Open `.md` files, read them beautifully, navigate with a table of contents, and export clean PDFs — all offline.
+A focused Markdown reader, editor, and PDF exporter for desktop. Open `.md` files, read them in a distraction-free layout, make changes with a live preview, and export clean PDFs — all offline.
 
 ---
 
@@ -10,7 +10,7 @@ A focused Markdown viewer and PDF exporter for desktop. Open `.md` files, read t
 *Mermaid diagrams, Gantt charts, and MathJax equations side-by-side*
 
 ![Multiple Themes](./docs/screenshots/themes.png)
-*22 themes including print-optimized layouts*
+*28 themes including modern, retro, and print-optimized palettes*
 
 ![Table of Contents](./docs/screenshots/toc.png)
 *Collapsible TOC sidebar with active heading tracking*
@@ -22,13 +22,13 @@ A focused Markdown viewer and PDF exporter for desktop. Open `.md` files, read t
 
 ## Installation
 
-Download from the [Releases](https://github.com/nambatipudi/PrintDown/releases) page:
+Download the asset that matches your platform from the [Releases](https://github.com/nambatipudi/PrintDown/releases) page. Available installers vary by release:
 
 | Platform | File |
 |----------|------|
-| macOS | `PrintDown-x.x.x-mac-arm64.dmg` — open and drag to Applications |
-| Windows | `PrintDown-Setup-x.x.x.exe` — run the installer |
-| Linux | `PrintDown-x.x.x.AppImage` — make executable and run |
+| macOS (Apple Silicon) | `Print Down-x.x.x-mac-arm64.dmg` — open and drag to Applications |
+| Windows | `Print Down Setup x.x.x.exe` — run the installer when available |
+| Linux | `Print Down-x.x.x.AppImage` — make executable and run when available |
 
 ---
 
@@ -38,7 +38,7 @@ Download from the [Releases](https://github.com/nambatipudi/PrintDown/releases) 
 - **File → Open...** (`Cmd/Ctrl+O`) to browse
 - **Double-click** a `.md` file if you set up the file association during install
 
-Multiple files open as tabs. Tabs can be scrolled with the `‹` `›` buttons when there are many. Right-click any tab for **Close**, **Close Others**, or **Close All**.
+Multiple files open as tabs. Tabs can be scrolled with the `‹` `›` buttons when there are many. Right-click any tab for **Close**, **Close Others**, or **Close All**. Closing tabs with unsaved work prompts you to save all changes, discard them, or cancel; closing other tabs also cleans up their file watchers and directory access.
 
 ---
 
@@ -147,7 +147,7 @@ For the cleanest output, switch to one of the **Print** themes before exporting.
 
 ### Page Settings
 
-Click the **📄** button in the toolbar to set paper size (A4, Letter, A3, etc.), orientation, margins, and enable **Page View** — a paginated layout that shows how the document will break across pages before you export.
+Click the **📄** button in the toolbar to set paper size (**A4, A3, Letter, Legal, or Custom**), orientation, margins, and enable **Page View** — a paginated layout that shows how the document will break across pages before you export. The same dimension model is used by Page View, page guides, page breaks, and PDF export.
 
 ### File Watching
 
@@ -156,6 +156,10 @@ When a file open in a tab is modified externally, PrintDown detects the change. 
 ### Session Restore
 
 On next launch, PrintDown reopens the same files, restores the active theme and font size, and remembers whether the TOC sidebar was open.
+
+### Privacy and Safety
+
+PrintDown processes Markdown, diagrams, equations, and PDF export locally. It sanitizes rendered Markdown HTML before inserting it into the application, while retaining the SVG and MathML elements required for Mermaid, Draw.io, and MathJax output.
 
 ---
 
@@ -182,6 +186,28 @@ On next launch, PrintDown reopens the same files, restores the active theme and 
 - Draw.io diagrams (fenced ` ```xml ` blocks containing `<mxGraphModel>`)
 - Inline HTML and SVG
 - Footnotes, definition lists, code syntax highlighting
+
+---
+
+## Development and Quality Checks
+
+Install dependencies with `npm ci`, then use:
+
+| Command | Purpose |
+|---------|---------|
+| `npm run build` | Build production bundles |
+| `npm run pack` | Build and package the macOS application directory |
+| `npm run test:e2e` | Package the app and run the complete Playwright Electron regression suite |
+| `npx tsc --noEmit` | Type-check the application |
+| `npm audit --omit=dev` | Check production dependency advisories |
+
+The E2E suite runs the packaged Electron app and covers file operations, tabs and unsaved changes, editing, rendering, MathJax, Mermaid, Draw.io, Page View, PDF export, themes, session restore, keyboard controls, accessibility state, and visual regressions.
+
+## Releases
+
+Version tags in the form `vX.Y.Z` trigger the macOS release workflow. It builds the installer, uploads the resulting artifacts, and creates the GitHub release. The manual build workflow can produce Windows and Linux artifacts when needed.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ---
 
