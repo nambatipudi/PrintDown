@@ -25,6 +25,27 @@ test('tab label shows the filename', async () => {
   await expect(page.locator('#tabs .tab').last()).toContainText('markdown-basics');
 });
 
+test('hostile filenames render as text without executing markup', async () => {
+  const filePath = createTempMd(
+    '# Safe Filename',
+    '<img src=x onerror=window.__tabTitleXss=true>',
+  );
+  try {
+    await page.evaluate(() => {
+      delete (window as typeof window & { __tabTitleXss?: boolean }).__tabTitleXss;
+    });
+    await openFile(app, filePath);
+    await expect(page.locator('#tabs .tab').filter({ hasText: '<img src=x onerror=window.__tabTitleXss=true>.md' }))
+      .toBeVisible();
+    await expect(page.locator('#tabs .tab img')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() =>
+      (window as typeof window & { __tabTitleXss?: boolean }).__tabTitleXss,
+    )).not.toBe(true);
+  } finally {
+    removeTempMd(filePath);
+  }
+});
+
 test('opening a second file adds a second tab', async () => {
   await openAndWait(app, page, 'math-equations.md');
   expect(await page.locator('#tabs .tab').count()).toBeGreaterThanOrEqual(2);

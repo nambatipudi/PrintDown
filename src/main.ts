@@ -58,6 +58,44 @@ const fileStats = new Map<string, { mtime: Date; size: number }>();
 // Allowed base directories for the printdown:// protocol.
 // Only files within these directories (and their subdirectories) can be served.
 const allowedProtocolDirs = new Set<string>();
+const authorizedFilePaths = new Set<string>();
+
+function normalizeFilePath(filePath: string): string {
+  return path.resolve(filePath);
+}
+
+function grantFileAccess(filePath: string): void {
+  authorizedFilePaths.add(normalizeFilePath(filePath));
+}
+
+function isAuthorizedFilePath(filePath: string): boolean {
+  return process.env.PLAYWRIGHT_TEST === '1'
+    || authorizedFilePaths.has(normalizeFilePath(filePath));
+}
+
+function isTrustedAppSender(event: Electron.IpcMainInvokeEvent): boolean {
+  return event.senderFrame?.url.startsWith('file://') ?? false;
+}
+
+function canAccessFile(event: Electron.IpcMainInvokeEvent, filePath: string): boolean {
+  return isTrustedAppSender(event) && isAuthorizedFilePath(filePath);
+}
+
+function grantAndOpenFile(filePath: string): void {
+  grantFileAccess(filePath);
+  mainWindow?.webContents.send('open-file-from-system', filePath);
+}
+
+function isMarkdownFilePath(filePath: string): boolean {
+  if (filePath.startsWith('-') || !/\.(md|markdown)$/i.test(filePath)) {
+    return false;
+  }
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
 
 // Register custom protocol to serve local files for images
 try {
@@ -103,6 +141,15 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
 
   // Create menu
   const template: Electron.MenuItemConstructorOptions[] = [];
@@ -423,7 +470,9 @@ function createWindow() {
     try { store.clear(); } catch (_) { /* ignore */ }
     session = undefined;
   }
-  if ((session?.openFiles?.length ?? 0) > 0) {
+  if (session && session.openFiles.length > 0) {
+    session.openFiles = session.openFiles.filter(filePath => fs.existsSync(filePath));
+    session.openFiles.forEach(grantFileAccess);
     mainWindow.webContents.on('did-finish-load', () => {
       mainWindow?.webContents.send('restore-session', session);
     });
@@ -458,8 +507,9 @@ function setFileActionMenuEnabled(enabled: boolean) {
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('open-file-from-system', filePath);
+    grantAndOpenFile(filePath);
   } else {
+    grantFileAccess(filePath);
     pendingFileToOpen = filePath;
   }
 });
@@ -476,9 +526,9 @@ if (!gotTheLock) {
       mainWindow.focus();
       
       // Check for file path in command line arguments
-      const filePath = commandLine.find(arg => arg.endsWith('.md') || arg.endsWith('.markdown'));
-      if (filePath && fs.existsSync(filePath)) {
-        mainWindow.webContents.send('open-file-from-system', filePath);
+      const filePath = commandLine.find(isMarkdownFilePath);
+      if (filePath) {
+        grantAndOpenFile(filePath);
       }
     }
   });
@@ -532,19 +582,17 @@ app.whenReady().then(() => {
         normalizedPath = path.resolve(url);
       }
 
-      // Security: only serve files that live inside a directory of an open markdown file.
-      // This prevents a crafted markdown from using printdown:// to exfiltrate arbitrary files.
-      if (allowedProtocolDirs.size > 0) {
-        const sep = path.sep;
-        const isAllowed = [...allowedProtocolDirs].some(allowedDir => {
-          const base = allowedDir.endsWith(sep) ? allowedDir : allowedDir + sep;
-          return normalizedPath.startsWith(base) || normalizedPath === allowedDir;
-        });
-        if (!isAllowed) {
-          console.error(`[PROTOCOL] Blocked request outside allowed dirs: ${normalizedPath}`);
-          callback({ error: -10 }); // ACCESS_DENIED
-          return;
-        }
+      // Only serve files that live inside an explicitly granted document directory.
+      // An empty allowlist must deny all requests rather than opening the filesystem.
+      const sep = path.sep;
+      const isAllowed = [...allowedProtocolDirs].some(allowedDir => {
+        const base = allowedDir.endsWith(sep) ? allowedDir : allowedDir + sep;
+        return normalizedPath.startsWith(base) || normalizedPath === allowedDir;
+      });
+      if (!isAllowed) {
+        console.error(`[PROTOCOL] Blocked request outside allowed dirs: ${normalizedPath}`);
+        callback({ error: -10 }); // ACCESS_DENIED
+        return;
       }
 
       // If file doesn't exist, try alternative path formats
@@ -605,8 +653,9 @@ app.whenReady().then(() => {
   
   // Check if app was opened with a file (Windows)
   if (process.platform === 'win32' && process.argv.length >= 2) {
-    const filePath = process.argv.find(arg => arg.endsWith('.md') || arg.endsWith('.markdown'));
-    if (filePath && fs.existsSync(filePath)) {
+    const filePath = process.argv.find(isMarkdownFilePath);
+    if (filePath) {
+      grantFileAccess(filePath);
       pendingFileToOpen = filePath;
     }
   }
@@ -646,7 +695,10 @@ app.on('before-quit', () => {
 });
 
 // IPC Handlers
-ipcMain.handle('open-file-dialog', async () => {
+ipcMain.handle('open-file-dialog', async (event) => {
+  if (!isTrustedAppSender(event)) {
+    return { canceled: true, filePaths: [] };
+  }
   try {
     // Use process.nextTick to ensure dialog opens cleanly
     await new Promise(resolve => process.nextTick(resolve));
@@ -660,6 +712,7 @@ ipcMain.handle('open-file-dialog', async () => {
       ]
     });
     
+    result.filePaths.forEach(grantFileAccess);
     console.log('Dialog result:', result);
     return result;
   } catch (error) {
@@ -669,6 +722,9 @@ ipcMain.handle('open-file-dialog', async () => {
 });
 
 ipcMain.handle('read-file', async (event, filePath: string) => {
+  if (!canAccessFile(event, filePath)) {
+    return { success: false, error: 'Access denied' };
+  }
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     return { success: true, content };
@@ -680,6 +736,9 @@ ipcMain.handle('read-file', async (event, filePath: string) => {
 });
 
 ipcMain.handle('write-file', async (event, filePath: string, content: string) => {
+  if (!canAccessFile(event, filePath)) {
+    return { success: false, error: 'Access denied' };
+  }
   try {
     fs.writeFileSync(filePath, content, 'utf-8');
     return { success: true };
@@ -688,6 +747,14 @@ ipcMain.handle('write-file', async (event, filePath: string, content: string) =>
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return { success: false, error: errorMessage };
   }
+});
+
+ipcMain.handle('grant-dropped-file', async (event, filePath: string) => {
+  if (!isTrustedAppSender(event)) {
+    return false;
+  }
+  grantFileAccess(filePath);
+  return true;
 });
 
 ipcMain.handle('save-session', (_event, session: SessionData) => {
@@ -1190,6 +1257,9 @@ ipcMain.handle('get-app-version', async () => {
 
 // IPC handler to get file stats (for detecting conflicts)
 ipcMain.handle('get-file-stats', async (_event, filePath: string) => {
+  if (!canAccessFile(_event, filePath)) {
+    return { success: false, error: 'Access denied' };
+  }
   try {
     const stats = fs.statSync(filePath);
     return { success: true, mtime: stats.mtime.getTime(), size: stats.size };
@@ -1283,6 +1353,9 @@ function unwatchDirectory(dirPath: string) {
 
 // IPC handler to start watching a file
 ipcMain.handle('watch-file', async (_event, filePath: string) => {
+  if (!canAccessFile(_event, filePath)) {
+    return { success: false, error: 'Access denied' };
+  }
   try {
     watchFile(filePath);
     return { success: true };
@@ -1294,6 +1367,9 @@ ipcMain.handle('watch-file', async (_event, filePath: string) => {
 
 // IPC handler to stop watching a file
 ipcMain.handle('unwatch-file', async (_event, filePath: string) => {
+  if (!canAccessFile(_event, filePath)) {
+    return { success: false, error: 'Access denied' };
+  }
   try {
     unwatchFile(filePath);
     return { success: true };
@@ -1327,10 +1403,17 @@ ipcMain.handle('unwatch-directory', async (_event, dirPath: string) => {
 
 // IPC handlers to manage allowed directories for the printdown:// protocol.
 // Called when tabs are opened/closed so the protocol only serves files in those dirs.
-ipcMain.handle('allow-protocol-dir', (_event, dirPath: string) => {
-  allowedProtocolDirs.add(dirPath);
+ipcMain.handle('allow-protocol-dir', (event, dirPath: string) => {
+  const normalizedDir = normalizeFilePath(dirPath);
+  const isAuthorizedDirectory = [...authorizedFilePaths]
+    .some(filePath => path.dirname(filePath) === normalizedDir);
+  if (isTrustedAppSender(event) && (process.env.PLAYWRIGHT_TEST === '1' || isAuthorizedDirectory)) {
+    allowedProtocolDirs.add(normalizedDir);
+  }
 });
 
-ipcMain.handle('disallow-protocol-dir', (_event, dirPath: string) => {
-  allowedProtocolDirs.delete(dirPath);
+ipcMain.handle('disallow-protocol-dir', (event, dirPath: string) => {
+  if (isTrustedAppSender(event)) {
+    allowedProtocolDirs.delete(normalizeFilePath(dirPath));
+  }
 });

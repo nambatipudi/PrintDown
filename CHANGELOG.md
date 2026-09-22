@@ -2,6 +2,25 @@
 
 All notable user-facing changes are documented in this file.
 
+## 1.7.6 - 2026-09-22
+
+### Security
+
+- Removed the unrestricted renderer IPC bridge and replaced it with narrowly scoped APIs.
+- Prevented external navigation from retaining privileged application APIs; HTTP(S) links now open in the system browser.
+- Restricted file, file-watch, and protocol access to main-process-issued file grants.
+- Made `printdown://` fail closed when no authorized document directory exists.
+- Sanitized Markdown before intermediate image-path rewriting to prevent event handlers from firing during DOM preprocessing.
+- Rendered tab titles with `textContent`, preventing filenames from being interpreted as HTML.
+
+### Fixed
+
+- Restored secure drag-and-drop file access through a trusted preload handoff.
+- Removed repeated context-menu dismissal listener registration.
+- Rejected malformed command-line file arguments safely.
+- Removed obsolete renderer helpers and dead PDF IPC handshake code.
+- Corrected the application stylesheet's unmatched closing brace.
+
 ## 1.7.5 - 2026-09-22
 
 ### Added

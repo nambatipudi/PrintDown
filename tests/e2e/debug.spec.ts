@@ -74,6 +74,18 @@ test('printdown:// protocol handler is registered', async () => {
   expect(isRegistered).toBe(true);
 });
 
+test('printdown:// denies ungranted filesystem paths', async () => {
+  const responseWasAllowed = await page.evaluate(async () => {
+    try {
+      const response = await fetch('printdown:///etc/passwd');
+      return response.ok;
+    } catch {
+      return false;
+    }
+  });
+  expect(responseWasAllowed).toBe(false);
+});
+
 // ── Single instance lock ───────────────────────────────────────────────────
 
 test('app is running as a single instance', async () => {

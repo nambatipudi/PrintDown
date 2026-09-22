@@ -22,6 +22,9 @@ declare global {
       readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
       writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
     };
+    fileAccess: {
+      claimDroppedFile: (filePath: string) => Promise<boolean>;
+    };
     session: {
       save: (sessionData: any) => Promise<any>;
     };
@@ -233,6 +236,30 @@ const md = new MarkdownIt({
   delimiters: ['dollars', 'brackets', 'gitlab', 'julia', 'kramdown'], // Support all common delimiters
 });
 
+const markdownSanitizerConfig = {
+  ADD_TAGS: ['mjx-container', 'mjx-math', 'mjx-mrow', 'mjx-mo', 'mjx-mi', 'mjx-mn',
+             'mjx-msup', 'mjx-msub', 'mjx-msubsup', 'mjx-mfrac', 'mjx-sqrt',
+             'mjx-mtext', 'mjx-mspace', 'mjx-merror', 'mjx-semantics',
+             'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
+             'mfrac', 'msqrt', 'mtext', 'mspace', 'semantics', 'annotation',
+             'foreignObject', 'svg', 'defs', 'marker', 'polygon', 'polyline', 'ellipse',
+             'line', 'path', 'g', 'text', 'tspan', 'use'],
+  ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
+             'xmlns', 'xmlns:xlink', 'viewBox', 'preserveAspectRatio', 'focusable',
+             'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href',
+             'data-drawio-xml', 'data-drawio-content', 'data-drawio-rendered',
+             'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r', 'd',
+             'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width',
+             'stroke-dasharray', 'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
+             'markerWidth', 'markerHeight', 'refX', 'refY', 'orient',
+             'checked', 'disabled', 'type'],
+  FORCE_BODY: false,
+};
+
+function sanitizeRenderedHtml(html: string): string {
+  return DOMPurify.sanitize(html, markdownSanitizerConfig);
+}
+
 // Simple YAML frontmatter extractor for MathJax macros
 function extractFrontmatter(markdown: string) {
   if (!markdown.startsWith('---')) return { body: markdown, macros: {} as Record<string, string> };
@@ -257,6 +284,7 @@ function extractFrontmatter(markdown: string) {
       macros[name] = value;
     }
   });
+
   return { body, macros };
 }
 
@@ -1469,14 +1497,6 @@ async function renderDrawioDiagramToSVG(xmlContent: string): Promise<SVGElement 
     if (container.parentNode) container.parentNode.removeChild(container);
   }
 }
-// Helper to extract style attributes
-function extractStyleAttribute(style: string, attr: string): string {
-  if (!style) return '';
-  const regex = new RegExp(`${attr}=([^;]+)`);
-  const match = style.match(regex);
-  return match ? match[1].replace(/^['"]|['"]$/g, '') : '';
-}
-
 function initializeEditor() {
   const container = document.getElementById('editor-container');
   if (!container) {
@@ -1696,10 +1716,6 @@ function setEditMode(enabled: boolean) {
   }
 }
 
-function handleEditorInput() {
-  // CodeMirror handles updates via updateListener
-}
-
 function schedulePreviewRender() {
   if (renderDebounceHandle) {
     window.clearTimeout(renderDebounceHandle);
@@ -1762,6 +1778,9 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   // Convert GitHub-style task list items to HTML checkboxes
   html = html.replace(/<li>\[\s*[xX]\s*\]\s*/g, '<li><input type="checkbox" checked disabled> ');
   html = html.replace(/<li>\[\s*\]\s*/g, '<li><input type="checkbox" disabled> ');
+  // Sanitize before parsing into an intermediate DOM for image rewriting. A detached
+  // DOM can still load images and dispatch event attributes before final insertion.
+  html = sanitizeRenderedHtml(html);
 
   // SAFE image path rewriting using DOM (preserve absolute, file://, UNC, drive-letter paths)
   if (tab.filePath) {
@@ -1786,7 +1805,6 @@ async function renderTab(index: number, options: RenderOptions = {}) {
         const protocolUrl = `printdown://${pathWithLeadingSlash}`;
         img.setAttribute('src', protocolUrl);
         img.setAttribute('data-original-src', originalSrc);
-        img.setAttribute('onerror', "console.error('[IMAGE] Failed to load:', this.src);");
       });
       html = temp.innerHTML;
     } catch (err) {
@@ -1796,25 +1814,7 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   
   // Set the HTML — sanitize to prevent XSS from malicious markdown files.
   // ADD_TAGS/ADD_ATTR allow MathJax (mjx-*), Mermaid (svg, foreignObject), and Draw.io (svg, defs, marker) to survive.
-  contentDiv.innerHTML = DOMPurify.sanitize(html, {
-    ADD_TAGS: ['mjx-container', 'mjx-math', 'mjx-mrow', 'mjx-mo', 'mjx-mi', 'mjx-mn',
-               'mjx-msup', 'mjx-msub', 'mjx-msubsup', 'mjx-mfrac', 'mjx-sqrt',
-               'mjx-mtext', 'mjx-mspace', 'mjx-merror', 'mjx-semantics',
-               'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
-               'mfrac', 'msqrt', 'mtext', 'mspace', 'semantics', 'annotation',
-               'foreignObject', 'svg', 'defs', 'marker', 'polygon', 'polyline', 'ellipse',
-               'line', 'path', 'g', 'text', 'tspan', 'use'],
-    ADD_ATTR: ['jax', 'display', 'style', 'class', 'id', 'data-original-src',
-               'xmlns', 'xmlns:xlink', 'viewBox', 'preserveAspectRatio', 'focusable',
-               'aria-hidden', 'role', 'tabindex', 'href', 'xlink:href',
-               'data-drawio-xml', 'data-drawio-content', 'data-drawio-rendered',
-               'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'rx', 'ry', 'r', 'd',
-               'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width',
-               'stroke-dasharray', 'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
-               'markerWidth', 'markerHeight', 'refX', 'refY', 'orient',
-               'checked', 'disabled', 'type'],
-    FORCE_BODY: false,
-  });
+  contentDiv.innerHTML = sanitizeRenderedHtml(html);
   // Tag raw markdown SVGs before MathJax runs so our responsive SVG CSS
   // does not accidentally target MathJax's own internal SVG output.
   contentDiv.querySelectorAll('svg').forEach(svg => {
@@ -1911,20 +1911,8 @@ async function waitForRenderingComplete(): Promise<void> {
   await new Promise(resolve => requestAnimationFrame(resolve));
 }
 
-// Expose function globally for PDF export
+// Expose the completion hook used by the main-process PDF export path.
 (window as any).waitForRenderingComplete = waitForRenderingComplete;
-(window as any).renderTab = renderTab;
-(window as any).activeTabIndex = () => activeTabIndex;
-(window as any).automationExportPDF = exportPDF;
-
-// Automation helper: load content into a new tab (used by Playwright tests)
-function automationLoadFile(content: string, filePath: string) {
-  const title = filePath.split(/[/\\]/).pop() || 'untitled';
-  const tab = { filePath, content, title } as Tab;
-  tabs.push(tab);
-  renderTab(tabs.length - 1, { skipEditorUpdate: true });
-}
-(window as any).automationLoadFile = automationLoadFile;
 
 // Generate Table of Contents from headings
 function generateTOC() {
@@ -2437,11 +2425,13 @@ function updateTabUI() {
   tabs.forEach((tab, index) => {
     const tabEl = document.createElement('div');
     tabEl.className = 'tab' + (index === activeTabIndex ? ' active' : '');
-    const dirtyMark = tab.isDirty ? '*' : '';
-    tabEl.innerHTML = `
-      <span>${tab.title}${dirtyMark}</span>
-      <span class="tab-close" data-index="${index}">✕</span>
-    `;
+    const title = document.createElement('span');
+    title.textContent = `${tab.title}${tab.isDirty ? '*' : ''}`;
+    const close = document.createElement('span');
+    close.className = 'tab-close';
+    close.dataset.index = String(index);
+    close.textContent = '✕';
+    tabEl.append(title, close);
     
     tabEl.addEventListener('click', (e) => {
       if (!(e.target as HTMLElement).classList.contains('tab-close')) {
@@ -2467,12 +2457,6 @@ function updateTabUI() {
     });
 
     tabsContainer.appendChild(tabEl);
-  });
-
-  // Dismiss context menu on click elsewhere
-  document.addEventListener('click', () => {
-    const menu = document.getElementById('tab-context-menu') as HTMLDivElement | null;
-    if (menu) menu.style.display = 'none';
   });
 
   // Wire context menu actions once
@@ -3117,8 +3101,9 @@ const IMG_MAX = 2.0;
 const IMG_STEP = 0.1;
 
 function applyImageScaleFactor(factor: number) {
-  document.documentElement.style.setProperty('--image-scale', factor.toString());
-  localStorage.setItem('imageScaleFactor', factor.toString());
+  imageScaleFactor = Math.min(IMG_MAX, Math.max(IMG_MIN, Number.isFinite(factor) ? factor : 1));
+  document.documentElement.style.setProperty('--image-scale', imageScaleFactor.toString());
+  localStorage.setItem('imageScaleFactor', imageScaleFactor.toString());
 }
 
 // Initialize image scaling with saved value
@@ -3457,42 +3442,6 @@ screenStyle.textContent = `
 `;
 document.head.appendChild(screenStyle);
 
-// PDF Export Handshake - Wait for all async rendering to complete
-if ((window as any).ipc) {
-  (window as any).ipc.on('export-pdf-start', async () => {
-    try {
-      // 1. Ensure Mermaid diagrams are fully rendered
-      if (window.mermaid) {
-        // Get all mermaid diagrams that haven't been rendered yet
-        const unrenderedDiagrams = document.querySelectorAll('.mermaid-diagram:not([data-processed])');
-        if (unrenderedDiagrams.length > 0) {
-          await window.mermaid.run({
-            nodes: Array.from(unrenderedDiagrams) as HTMLElement[]
-          });
-        }
-      }
-
-      // 2. Ensure UML sequence diagrams are drawn
-      // (js-sequence-diagrams draws synchronously, so if they exist they're already done)
-
-      // 3. Ensure MathJax is finished typesetting
-      if (window.MathJax && window.MathJax.typesetPromise) {
-        await window.MathJax.typesetPromise();
-      }
-
-      // 4. Give browser one more tick to settle layout
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // 5. Tell main process we're ready
-      (window as any).ipc.send('export-pdf-ready');
-    } catch (error) {
-      console.error('Error during PDF preparation:', error);
-      // Still send ready signal to avoid hanging
-      (window as any).ipc.send('export-pdf-ready');
-    }
-  });
-}
-
 // Drag and drop support for Markdown files
 document.addEventListener('DOMContentLoaded', () => {
   syncFileMenuState();
@@ -3500,6 +3449,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize TOC functionality
   initializeTOC();
+  document.addEventListener('click', () => {
+    const menu = document.getElementById('tab-context-menu') as HTMLDivElement | null;
+    if (menu) menu.style.display = 'none';
+  });
   
   // Setup tab scroll buttons
   const tabsContainer = document.getElementById('tabs')!;
@@ -3622,6 +3575,9 @@ document.addEventListener('DOMContentLoaded', () => {
       for (const path of candidates) {
         if (!path) continue;
         try {
+          if (!await window.fileAccess.claimDroppedFile(path)) {
+            continue;
+          }
           const stats = await window.fileWatch.getFileStats(path);
           if (stats.success && !validPaths.includes(path)) {
             validPaths.push(path);

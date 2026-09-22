@@ -1,6 +1,6 @@
 {
   "name": "printdown",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "description": "Markdown viewer with MathJax rendering, PDF export, and printing",
   "main": "dist/main.js",
   "scripts": {

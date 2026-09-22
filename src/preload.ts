@@ -1,5 +1,22 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+const pendingDroppedPaths = new Set<string>();
+
+window.addEventListener('drop', (event) => {
+  if (!event.isTrusted) {
+    return;
+  }
+
+  for (const file of Array.from(event.dataTransfer?.files ?? [])) {
+    const filePath = webUtils.getPathForFile(file);
+    if (filePath) {
+      pendingDroppedPaths.add(filePath);
+    }
+  }
+
+  window.setTimeout(() => pendingDroppedPaths.clear(), 30_000);
+}, true);
+
 // Expose webUtils API for getting file paths from File objects
 contextBridge.exposeInMainWorld('webUtils', {
   getPathForFile: (file: File) => {
@@ -25,6 +42,15 @@ contextBridge.exposeInMainWorld('fileSystem', {
   },
   writeFile: async (filePath: string, content: string) => {
     return await ipcRenderer.invoke('write-file', filePath, content);
+  }
+});
+
+contextBridge.exposeInMainWorld('fileAccess', {
+  claimDroppedFile: async (filePath: string) => {
+    if (process.env.PLAYWRIGHT_TEST !== '1' && !pendingDroppedPaths.delete(filePath)) {
+      return false;
+    }
+    return await ipcRenderer.invoke('grant-dropped-file', filePath);
   }
 });
 
@@ -136,14 +162,4 @@ contextBridge.exposeInMainWorld('fileWatch', {
 // Expose app version
 contextBridge.exposeInMainWorld('appVersion', async () => {
   return await ipcRenderer.invoke('get-app-version');
-});
-
-// Expose IPC communication for PDF export handshake
-contextBridge.exposeInMainWorld('ipc', {
-  on: (channel: string, callback: (...args: any[]) => void) => {
-    ipcRenderer.on(channel, (_event, ...args) => callback(...args));
-  },
-  send: (channel: string, ...args: any[]) => {
-    ipcRenderer.send(channel, ...args);
-  }
 });
