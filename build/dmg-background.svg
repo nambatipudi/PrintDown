@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="460" viewBox="0 0 700 460">
+  <defs>
+    <linearGradient id="background" x1="40" y1="24" x2="656" y2="438" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FCFF"/>
+      <stop offset="1" stop-color="#E3F4FF"/>
+    </linearGradient>
+    <linearGradient id="line" x1="278" y1="0" x2="454" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#44CFEA" stop-opacity=".35"/>
+      <stop offset=".5" stop-color="#2388E8"/>
+      <stop offset="1" stop-color="#44CFEA" stop-opacity=".35"/>
+    </linearGradient>
+  </defs>
+  <rect width="700" height="460" rx="18" fill="url(#background)"/>
+  <circle cx="74" cy="82" r="126" fill="#44CFEA" opacity=".12"/>
+  <circle cx="642" cy="412" r="164" fill="#2388E8" opacity=".08"/>
+  <text x="350" y="70" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" fill="#12243E">Install Print Down</text>
+  <text x="350" y="102" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="15" fill="#46627F">Drag Print Down to Applications</text>
+  <path d="M270 238h160" stroke="url(#line)" stroke-width="5" stroke-linecap="round"/>
+  <path d="m414 224 18 14-18 14" fill="none" stroke="#2388E8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="176" y="354" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="14" font-weight="600" fill="#12243E">Print Down</text>
+  <text x="524" y="354" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="14" font-weight="600" fill="#12243E">Applications</text>
+  <path d="M74 405h552" stroke="#9DC9E9" stroke-width="1"/>
+  <text x="350" y="430" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="12" fill="#46627F">Use the PKG installer to add the Finder PDF conversion Quick Action.</text>
+</svg>

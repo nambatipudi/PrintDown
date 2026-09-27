@@ -1,239 +1,275 @@
-# PrintDown
+# Print Down
 
-A focused Markdown reader, editor, and PDF exporter for desktop. Open `.md` files, read them in a distraction-free layout, make changes with a live preview, and export clean PDFs — all offline.
+Print Down is an offline desktop Markdown reader, editor, and PDF exporter.
+It renders documents with MathJax, Mermaid, Draw.io, SVG, images, themes, and
+print-aware page settings—without sending document content to a web service.
 
----
-
-## Screenshots
-
-![Diagrams and Math](./docs/screenshots/diagrams-math.png)
-*Mermaid diagrams, Gantt charts, and MathJax equations side-by-side*
-
-![Multiple Themes](./docs/screenshots/themes.png)
-*28 themes including modern, retro, and print-optimized palettes*
-
-![Table of Contents](./docs/screenshots/toc.png)
-*Collapsible TOC sidebar with active heading tracking*
-
-![Edit Mode](./docs/screenshots/edit.png)
-*Split-pane edit mode with live preview*
+![Diagrams and math in Print Down](./docs/screenshots/diagrams-math.png)
 
 ---
 
-## Installation
+## Install
 
-Download the asset that matches your platform from the [Releases](https://github.com/nambatipudi/PrintDown/releases) page. Available installers vary by release:
+Download the current platform artifact from
+[GitHub Releases](https://github.com/nambatipudi/PrintDown/releases).
 
-| Platform | File |
-|----------|------|
-| macOS (Apple Silicon) | `Print-Down-x.x.x-mac-arm64.dmg` — open and drag to Applications |
-| Windows | `Print-Down-Setup-x.x.x.exe` — run the installer when available |
-| Linux | `Print-Down-x.x.x.AppImage` — make executable and run when available |
+| Platform | Recommended artifact | Installation |
+|:---------|:---------------------|:-------------|
+| macOS — Apple Silicon | `Print-Down-x.x.x-mac-arm64.pkg` | Run the package installer. It installs Print Down in Applications and the Finder PDF-conversion Quick Action. |
+| macOS — Apple Silicon | `Print-Down-x.x.x-mac-arm64.dmg` | Drag Print Down to Applications. The DMG includes the optional Quick Action workflow. |
+| Windows | `Print-Down-Setup-x.x.x.exe` | Run the installer. It adds the Explorer **Convert to PDF (Markdown)** command for `.md` and `.markdown` files. |
+| Linux | `Print-Down-x.x.x.AppImage` | Make the AppImage executable, then run it. |
 
----
-
-## Opening Files
-
-- **Drag and drop** one or more `.md` files onto the window
-- **File → Open...** (`Cmd/Ctrl+O`) to browse
-- **Double-click** a `.md` file if you set up the file association during install
-
-Multiple files open as tabs. Tabs can be scrolled with the `‹` `›` buttons when there are many. Right-click any tab for **Close**, **Close Others**, or **Close All**. Closing tabs with unsaved work prompts you to save all changes, discard them, or cancel; closing other tabs also cleans up their file watchers and directory access.
+> **macOS Quick Action:** The PKG is the one-step installer. After
+> installation, relaunch Finder if needed, then use **Quick Actions → Convert
+> Markdown to PDF** on one or more Markdown files.
 
 ---
 
-## Features
+## Start reading and editing
 
-### Table of Contents
+Open files with **File → Open…** (`Cmd/Ctrl+O`), drag files onto the window,
+or open an associated Markdown file from Finder or Explorer.
 
-Click the **☰** button (top-left) or press `Cmd/Ctrl+\` to toggle the TOC sidebar. The sidebar lists every heading in the document — click one to scroll there instantly. The active section is highlighted as you scroll.
+### Documents and tabs
 
-### Edit Mode
+- Open one or many `.md` or `.markdown` files in tabs.
+- Use the `‹` and `›` tab controls when many tabs are open.
+- Right-click a tab for **Close**, **Close Others**, or **Close All**.
+- Closing dirty tabs prompts you to **Save All**, discard changes, or cancel.
+- Print Down restores open files, the active theme, font size, and the active
+  document when it starts again.
 
-Click the **✎** button (or use the toolbar) to split the window into an editor on the left and a live preview on the right. The preview updates as you type. Drag the splitter to adjust the ratio.
+### Reader and editor
 
-### Themes
+The reader uses a centered, document-first layout. Select **Edit** to open a
+split-pane Markdown editor with a live preview. Drag the splitter to adjust
+the workspace, and use **Refresh** to reload a file that changed outside the
+app.
 
-**View → Theme** offers 28 themes:
+### Navigate long documents
 
-| General use | Curated palettes | Print-optimized |
-|-------------|------------------|-----------------|
-| Dark, Light, Sepia, Nord | Modern Slate, Modern Sage | Print Classic |
-| Dracula, Monokai, GitHub | Modern Rose, Retro Amber | Print Modern |
-| Oceanic, Terminal, Forest | Retro Sunset, Retro Pixel | Print Elegant |
-| Literary, Newspaper, Academic | | Print Technical |
-| Minimal, Cyberpunk, Solarized Light | | Print Report |
-| | | Print Minimalist |
+Use **View → Toggle Table of Contents** (`Cmd/Ctrl+\`) to show headings.
+Click an entry to jump to it; the active heading follows the reader scroll.
 
-The six print-optimized themes are designed for clean PDF output with professional typography. The modern palettes use neutral surfaces with a single accent hue to preserve hierarchy and reading contrast. The retro palettes use deliberately limited amber, sunset, and phosphor-inspired colors rather than saturating the whole page; body and code text remain high-contrast for long reading sessions.
+---
 
-### Font Size
+## Create compatible Markdown
 
-**View → Font Size** or keyboard shortcuts:
+Print Down supports portable, print-friendly Markdown rather than a
+proprietary document format.
 
-| Action | Shortcut |
-|--------|----------|
-| Increase | `Cmd/Ctrl+=` |
-| Decrease | `Cmd/Ctrl+-` |
-| Reset | `Cmd/Ctrl+0` |
+### Core formatting
 
-Font size persists across sessions and is applied to PDF exports.
+- One document title: begin with a single `# Heading`.
+- Hierarchical headings: do not skip heading levels.
+- Standard emphasis, links, ordered and unordered lists, nested lists,
+  task lists, tables, blockquotes, and horizontal rules.
+- Fenced code blocks with a language identifier, such as ` ```typescript `.
+- Inline code with backticks and strikethrough with `~~text~~`.
 
-### Math Equations
+### Math, diagrams, and visuals
 
-Write LaTeX inline with `$...$` or display with `$$...$$`:
+| Content | Write it as |
+|:--------|:------------|
+| Inline math | `$E = mc^2$` |
+| Display math | `$$\int_0^\infty e^{-x}\,dx = 1$$` |
+| Mermaid diagram | A fenced `mermaid` block |
+| Draw.io diagram | A fenced `xml` block containing `<mxGraphModel>` |
+| UML sequence diagram | A fenced `uml-sequence-diagram` block |
+| Inline SVG | A standalone `<svg>` element or `svg` fenced block |
+| Image | Standard Markdown image syntax with a relative or supported URL |
 
-```markdown
-Inline: $E = mc^2$
+MathJax renders mathematics locally. Mermaid supports flowcharts, sequence,
+class, state, Gantt, Git graph, and pie diagrams. Draw.io XML is rendered
+inline using diagrams.net technology.
 
-Display:
-$$\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}$$
-```
+### Images and print layout
 
-Rendered by MathJax 3, fully offline.
+PNG, JPG, GIF, WebP, and SVG images are supported. Relative paths resolve
+from the Markdown file, so they travel well with a document folder. Hover an
+image or Mermaid diagram to resize it, reposition it left/center/right, or
+double-click it to reset its layout.
 
-### Mermaid Diagrams
+For predictable A4 output, keep images below approximately 186 mm wide, code
+lines below roughly 100 characters, and complex diagrams below approximately
+220 mm tall.
 
-Use a `mermaid` fenced code block for flowcharts, sequence diagrams, class diagrams, state diagrams, Gantt charts, Git graphs, and pie charts:
+### Safe HTML and unsupported syntax
 
-````markdown
-```mermaid
-graph TD
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Done]
-    B -->|No| A
-```
-````
+Safe presentation HTML includes `div`, `span`, `details`, `summary`, `table`,
+`img`, `br`, `sup`, `sub`, `mark`, `kbd`, `abbr`, `p`, `ul`, `ol`, and `li`.
+Scripts, event attributes, and `javascript:` URLs are removed before content
+is rendered.
 
-Diagrams match the active theme automatically.
+Avoid footnotes, definition lists, `[toc]` directives, emoji shortcodes,
+admonition-block syntax, and relying on code syntax colors. They are not
+supported consistently in Print Down’s reader and PDF output.
 
-### Draw.io Diagrams
+### Use AI authoring templates
 
-Paste the XML from [diagrams.net](https://app.diagrams.net) into an `xml` fenced code block:
+Give an AI assistant the Print Down authoring rules before asking it to create
+Markdown:
 
-````markdown
-```xml
-<mxGraphModel>
-  <root>
-    <mxCell id="0"/><mxCell id="1" parent="0"/>
-    <mxCell id="2" value="Hello" style="rounded=1;" vertex="1" parent="1">
-      <mxGeometry x="100" y="100" width="120" height="60" as="geometry"/>
-    </mxCell>
-  </root>
-</mxGraphModel>
-```
-````
+| Assistant | Copy this template into your content project |
+|:----------|:---------------------------------------------|
+| GitHub Copilot | [copilot-instructions.md](./templates/ai-instructions/copilot-instructions.md) → `.github/copilot-instructions.md` |
+| Claude Code | [CLAUDE.md](./templates/ai-instructions/CLAUDE.md) → `CLAUDE.md` |
 
-PrintDown renders it as SVG inline — no external service needed. Supports shapes, connectors, swimlanes, text labels, and custom styling.
+The templates guide AI-generated content toward supported Markdown, diagrams,
+math, safe HTML, and printable layouts.
 
-### Images and SVG
+---
 
-Reference images normally in Markdown. SVG files are supported alongside PNG, JPG, GIF, and WebP. You can also embed raw `<svg>` tags directly in the document.
+## Export and conversion
 
-### Resize and Reposition
+### Export the open document
 
-Hover over any image or Mermaid diagram to reveal handles:
-- **Bottom-right corner** — drag to resize (aspect ratio preserved)
-- **Top handle ⋮⋮** — drag to align left / center / right
-- **Double-click** — reset to original size and position
+Choose **File → Export to PDF…** (`Cmd/Ctrl+P`). The export uses the active
+theme, font size, page settings, image/diagram layout, and rendered math.
 
-Settings are saved per file and applied to PDF exports.
+#### Configure pages
 
-### PDF Export
+Open **Page Setup** (the `📄` toolbar button) to choose:
 
-**File → Export to PDF...** (`Cmd/Ctrl+P`) opens a save dialog. The PDF uses the current theme, font size, and all image/diagram layout settings.
+- A4, A3, Letter, Legal, or a custom page size
+- Portrait or landscape orientation
+- Individual page margins
+- Page View, which previews page width, margins, guides, and breaks before
+  export
 
-For the cleanest output, switch to one of the **Print** themes before exporting.
+The same page-dimension model drives Page View and PDF export.
 
-### Convert Markdown to PDF from Finder or Explorer
+#### Choose a print theme
 
-PrintDown can create a PDF beside a Markdown file without opening the editor:
+**View → Theme** includes 28 themes: general reading themes, six curated
+modern/retro palettes, and six print-oriented themes. Use one of the **Print**
+themes for restrained, professional PDF output.
+
+##### Print theme options
+
+- Print Classic
+- Print Modern
+- Print Elegant
+- Print Technical
+- Print Report
+- Print Minimalist
+
+###### Theme note
+
+Theme colors are included in PDF output. Print themes prioritize paper-like
+surfaces, legible text, and high contrast over decorative saturation.
+
+### Convert files from Finder or Explorer
+
+Print Down can create a PDF beside a source document without opening the
+editor:
 
 ```text
 notes.md -> notes.pdf
 ```
 
-- **macOS:** install the release `.pkg` file. It installs Print Down and the **Convert Markdown to PDF** Finder Quick Action together. Then select Markdown files in Finder and choose **Quick Actions -> Convert Markdown to PDF**.
-- **Windows:** the installer adds **Convert to PDF (Markdown)** to the Explorer context menu for `.md` and `.markdown` files.
-
-The conversion command is also available to automation:
+- **macOS:** Select one or more Markdown files in Finder, then choose
+  **Quick Actions → Convert Markdown to PDF**.
+- **Windows:** Right-click Markdown files, then choose
+  **Convert to PDF (Markdown)**.
+- **Automation:** Run:
 
 ```bash
 "Print Down" --convert-to-pdf /path/to/notes.md
 ```
 
-Existing PDFs are replaced only after a successful conversion. When multiple files are selected, each is converted independently.
+Existing target PDFs are replaced only after a new PDF has been generated
+successfully.
 
-### Convert a Folder of Markdown Files
+### Convert an entire folder
 
-Choose **Tools → Convert Folder to PDFs…**, then select a folder. PrintDown recursively converts every `.md` and `.markdown` file in that folder and its subfolders, writing each PDF beside its source file. A progress dialog reports the current file and any failures without changing your open documents.
+Choose **Tools → Convert Folder to PDFs…** and select a root folder. Print
+Down recursively converts every `.md` and `.markdown` file in that folder and
+its subfolders, writing each PDF beside its source file.
 
-### Page Settings
-
-Click the **📄** button in the toolbar to set paper size (**A4, A3, Letter, Legal, or Custom**), orientation, margins, and enable **Page View** — a paginated layout that shows how the document will break across pages before you export. The same dimension model is used by Page View, page guides, page breaks, and PDF export.
-
-### File Watching
-
-When a file open in a tab is modified externally, PrintDown detects the change. If the tab has no unsaved edits it reloads automatically; if it has edits it prompts you to keep or discard them.
-
-### Session Restore
-
-On next launch, PrintDown reopens the same files, restores the active theme and font size, and remembers whether the TOC sidebar was open.
-
-### Privacy and Safety
-
-PrintDown processes Markdown, diagrams, equations, and PDF export locally. It sanitizes rendered Markdown HTML before inserting it into the application, while retaining the SVG and MathML elements required for Mermaid, Draw.io, and MathJax output.
+The utility shows a progress bar, identifies the current document, reports
+failures, and cleans up its temporary workspace when complete. It preserves
+your open documents and unsaved edits.
 
 ---
 
-## Keyboard Shortcuts
+## Themes, privacy, and reliability
+
+### Themes and accessibility
+
+Use **View → Theme** to select general, modern, retro, and print-focused
+palettes. Use **View → Font Size** to increase, decrease, or reset the
+reading size; the setting persists and is included in exports.
+
+### Local processing
+
+Markdown, math, diagrams, PDF rendering, and file conversion run locally.
+Print Down sanitizes rendered HTML, limits file access to user-authorized
+documents, and opens HTTP(S) links in the system browser rather than inside
+the privileged app window.
+
+### File changes
+
+Print Down watches open files. Clean tabs reload automatically when their
+source changes; dirty tabs prompt you to keep local edits or reload the file.
+
+---
+
+## Keyboard shortcuts
 
 | Action | Shortcut |
-|--------|----------|
+|:-------|:---------|
 | Open file | `Cmd/Ctrl+O` |
 | Save | `Cmd/Ctrl+S` |
 | Export to PDF | `Cmd/Ctrl+P` |
 | Increase font | `Cmd/Ctrl+=` |
 | Decrease font | `Cmd/Ctrl+-` |
 | Reset font | `Cmd/Ctrl+0` |
-| Toggle TOC | `Cmd/Ctrl+\` |
+| Toggle table of contents | `Cmd/Ctrl+\` |
 | Quit | `Cmd/Ctrl+Q` |
 
 ---
 
-## Supported Markdown
+## Develop and verify
 
-- CommonMark + GitHub Flavored Markdown (tables, strikethrough, task lists)
-- Inline and display math (`$...$`, `$$...$$`)
-- Mermaid diagrams (fenced ` ```mermaid ` blocks)
-- Draw.io diagrams (fenced ` ```xml ` blocks containing `<mxGraphModel>`)
-- Inline HTML and SVG
-- Footnotes, definition lists, code syntax highlighting
+Install dependencies:
 
----
+```bash
+npm ci
+```
 
-## Development and Quality Checks
-
-Install dependencies with `npm ci`, then use:
+### Build locally
 
 | Command | Purpose |
-|---------|---------|
-| `npm run build` | Build production bundles |
-| `npm run pack` | Build and package the macOS application directory |
-| `npm run test:e2e` | Package the app and run the complete Playwright Electron regression suite |
-| `npx tsc --noEmit` | Type-check the application |
-| `npm audit --omit=dev` | Check production dependency advisories |
+|:--------|:--------|
+| `npm start` | Launch the development app |
+| `npm run build` | Generate branding assets and build production bundles |
+| `npm run pack` | Package the local macOS app directory |
+| `npm run dist:mac` | Build local macOS DMG, PKG, and ZIP artifacts |
+| `npm run dist:win` | Build Windows artifacts on Windows |
+| `npm run dist:linux` | Build Linux artifacts on Linux |
 
-The E2E suite runs the packaged Electron app and covers file operations, tabs and unsaved changes, editing, rendering, MathJax, Mermaid, Draw.io, Page View, PDF export, themes, session restore, keyboard controls, accessibility state, and visual regressions.
+### Quality checks
 
-## Releases
+| Command | Purpose |
+|:--------|:--------|
+| `npx tsc --noEmit` | Type-check TypeScript |
+| `npm run test:e2e` | Package the app and run Playwright end-to-end regression tests |
+| `npm audit --omit=dev` | Review production dependency advisories |
+| `git diff --check` | Detect whitespace errors before committing |
 
-Version tags in the form `vX.Y.Z` trigger the macOS release workflow. It builds the installer, uploads the resulting artifacts, and creates the GitHub release. The manual build workflow can produce Windows and Linux artifacts when needed.
+### Release automation
 
-See [CHANGELOG.md](CHANGELOG.md) for release history.
+Pushing a tag in the form `vX.Y.Z` triggers the macOS GitHub Actions release
+workflow. It builds the DMG, PKG, and ZIP artifacts, uploads them, and creates
+the GitHub release. The manual build workflow can create Windows and Linux
+artifacts when needed.
+
+See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 ---
 
 ## License
 
-[MIT](LICENSE) — © Narayan Ambatipudi
+[MIT](./LICENSE) — © Narayan Ambatipudi

@@ -2,6 +2,18 @@
 
 All notable user-facing changes are documented in this file.
 
+## 1.7.11 - 2026-09-27
+
+### Added
+
+- Added copy-ready GitHub Copilot and Claude Code instructions for generating PrintDown-compatible Markdown.
+- Added an original document-to-PDF application icon and a branded macOS DMG background.
+
+### Changed
+
+- Rewrote the README as a current installation, authoring, conversion, export, privacy, and development guide.
+- macOS DMG builds now generate all application icons and installer artwork from versioned SVG source assets.
+
 ## 1.7.10 - 2026-09-27
 
 ### Added

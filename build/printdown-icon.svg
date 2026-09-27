@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title>Print Down document to PDF icon</title>
+  <defs>
+    <linearGradient id="shell" x1="120" y1="92" x2="904" y2="932" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#162A48"/>
+      <stop offset="1" stop-color="#0B1428"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="170" y1="142" x2="846" y2="886" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4CE7F5"/>
+      <stop offset="1" stop-color="#2388E8"/>
+    </linearGradient>
+    <linearGradient id="pdf" x1="584" y1="618" x2="790" y2="834" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF6B6B"/>
+      <stop offset="1" stop-color="#D83C62"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#07101F" flood-opacity=".38"/>
+    </filter>
+  </defs>
+  <rect x="68" y="68" width="888" height="888" rx="212" fill="url(#shell)"/>
+  <rect x="92" y="92" width="840" height="840" rx="188" fill="none" stroke="url(#accent)" stroke-width="30"/>
+  <g filter="url(#shadow)">
+    <path d="M280 226c0-27.6 22.4-50 50-50h243l171 171v297c0 27.6-22.4 50-50 50H330c-27.6 0-50-22.4-50-50V226Z" fill="#F8FBFF"/>
+    <path d="M573 176v121c0 27.6 22.4 50 50 50h121L573 176Z" fill="#BCE8FF"/>
+    <rect x="362" y="402" width="244" height="34" rx="17" fill="#27405F"/>
+    <rect x="362" y="474" width="300" height="34" rx="17" fill="#6D85A1"/>
+    <rect x="362" y="546" width="218" height="34" rx="17" fill="#6D85A1"/>
+    <path d="M348 285h54v-54h42v54h54v42h-54v54h-42v-54h-54v-42Zm175 0h54v-54h42v54h54v42h-54v54h-42v-54h-54v-42Z" fill="#2388E8"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="558" y="604" width="238" height="210" rx="54" fill="url(#pdf)"/>
+    <path d="M617 658h43c35 0 57 18 57 49 0 32-22 51-57 51h-15v31h-28V658Zm28 24v52h13c19 0 30-9 30-26 0-17-11-26-30-26h-13Zm91-24h26c42 0 69 25 69 65 0 41-27 66-69 66h-26V658Zm28 25v81h-2c25 0 40-15 40-40 0-25-15-41-40-41h-2Z" fill="#FFF7F4"/>
+  </g>
+</svg>

@@ -1,12 +1,13 @@
 {
   "name": "printdown",
-  "version": "1.7.10",
+  "version": "1.7.11",
   "description": "Markdown viewer with MathJax rendering, PDF export, and printing",
   "main": "dist/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "webpack --mode development && electron .",
-    "build": "webpack --mode production",
+    "prepare-assets": "node scripts/generate-brand-assets.js",
+    "build": "npm run prepare-assets && webpack --mode production",
     "watch": "webpack --mode development --watch",
     "clean": "node -e \"const fs = require('fs'); ['dist', 'release'].forEach(dir => fs.rmSync(dir, {recursive:true, force:true}));\"",
     "generate-icons": "node generate-icons.js",
@@ -159,20 +160,27 @@
     },
     "dmg": {
       "title": "${productName} ${version}",
+      "background": "build/dmg-background.png",
+      "window": {
+        "width": 700,
+        "height": 460
+      },
+      "iconSize": 96,
+      "iconTextSize": 14,
       "contents": [
         {
-          "x": 130,
-          "y": 220
+          "x": 176,
+          "y": 238
         },
         {
-          "x": 410,
-          "y": 220,
+          "x": 524,
+          "y": 238,
           "type": "link",
           "path": "/Applications"
         },
         {
-          "x": 270,
-          "y": 420,
+          "x": 350,
+          "y": 395,
           "type": "file",
           "path": "macos/Convert Markdown to PDF.workflow"
         }
