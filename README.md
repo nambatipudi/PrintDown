@@ -153,7 +153,7 @@ PrintDown can create a PDF beside a Markdown file without opening the editor:
 notes.md -> notes.pdf
 ```
 
-- **macOS:** the release DMG includes **Convert Markdown to PDF.workflow**. Open it once after moving Print Down to Applications, then select Markdown files in Finder and choose **Quick Actions -> Convert Markdown to PDF**.
+- **macOS:** install the release `.pkg` file. It installs Print Down and the **Convert Markdown to PDF** Finder Quick Action together. Then select Markdown files in Finder and choose **Quick Actions -> Convert Markdown to PDF**.
 - **Windows:** the installer adds **Convert to PDF (Markdown)** to the Explorer context menu for `.md` and `.markdown` files.
 
 The conversion command is also available to automation:
@@ -163,6 +163,10 @@ The conversion command is also available to automation:
 ```
 
 Existing PDFs are replaced only after a successful conversion. When multiple files are selected, each is converted independently.
+
+### Convert a Folder of Markdown Files
+
+Choose **Tools → Convert Folder to PDFs…**, then select a folder. PrintDown recursively converts every `.md` and `.markdown` file in that folder and its subfolders, writing each PDF beside its source file. A progress dialog reports the current file and any failures without changing your open documents.
 
 ### Page Settings
 

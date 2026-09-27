@@ -1,0 +1,19 @@
+#!/bin/zsh
+set -euo pipefail
+
+target_volume="${3%/}"
+if [[ "$2" == *.app ]]; then
+  app_path="${target_volume}${2}"
+else
+  app_path="${target_volume}${2}/Print Down.app"
+fi
+workflow_source="${app_path}/Contents/Resources/Convert Markdown to PDF.workflow"
+workflow_destination="${target_volume}/Library/Services/Convert Markdown to PDF.workflow"
+
+if [[ ! -d "$workflow_source" ]]; then
+  echo "Bundled Finder workflow is missing: $workflow_source" >&2
+  exit 1
+fi
+
+mkdir -p "${workflow_destination:h}"
+ditto "$workflow_source" "$workflow_destination"

@@ -2,6 +2,24 @@
 
 All notable user-facing changes are documented in this file.
 
+## 1.7.10 - 2026-09-27
+
+### Added
+
+- Added **Tools → Convert Folder to PDFs…** for recursively converting a selected folder's Markdown files to adjacent PDFs with progress and failure reporting.
+
+## 1.7.9 - 2026-09-23
+
+### Fixed
+
+- Registered the macOS Finder Quick Action with `NSServices` so it appears for Markdown files after installing the PKG.
+
+## 1.7.8 - 2026-09-22
+
+### Changed
+
+- Added a one-step macOS PKG installer that installs Print Down and the Finder **Convert Markdown to PDF** Quick Action together.
+
 ## 1.7.7 - 2026-09-22
 
 ### Added

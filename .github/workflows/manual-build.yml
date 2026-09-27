@@ -79,6 +79,7 @@ jobs:
           name: macos-installer
           path: |
             release/*.dmg
+            release/*.pkg
             release/*.zip
 
   build-linux:

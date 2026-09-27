@@ -29,7 +29,7 @@ declare global {
       save: (sessionData: any) => Promise<any>;
     };
     printExport: {
-      exportPDF: (filePath: string, themeData?: any, pageSettings?: any) => Promise<string | null>;
+      exportPDF: (filePath: string, themeData?: any, pageSettings?: any, automaticOutput?: boolean) => Promise<string | null>;
     };
     headlessConversion: {
       onStart: (callback: (filePath: string) => void) => void;
@@ -38,6 +38,7 @@ declare global {
     menuEvents: {
       onMenuOpen: (callback: () => void) => void;
       onMenuExportPDF: (callback: () => void) => void;
+      onMenuConvertFolderToPDF: (callback: (filePaths: string[]) => void) => void;
       onMenuCopyDebugLogs: (callback: () => void) => void;
       onRestoreSession: (callback: (event: any, session: any) => void) => void;
       onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => void;
@@ -2663,10 +2664,10 @@ async function openFile() {
 }
 
 // Open a specific file path (used by drag-and-drop)
-async function openFilePath(filePath: string, options: { activate?: boolean } = {}) {
-  const { activate = true } = options;
+async function openFilePath(filePath: string, options: { activate?: boolean; temporary?: boolean } = {}) {
+  const { activate = true, temporary = false } = options;
   try {
-    const existingIndex = tabs.findIndex(t => t.filePath === filePath);
+    const existingIndex = temporary ? -1 : tabs.findIndex(t => t.filePath === filePath);
     if (existingIndex >= 0) {
       if (activate) {
         await renderTab(existingIndex);
@@ -2691,7 +2692,9 @@ async function openFilePath(filePath: string, options: { activate?: boolean } = 
       lastModified
     });
 
-    window.fileWatch.watchFile(filePath);
+    if (!temporary) {
+      window.fileWatch.watchFile(filePath);
+    }
     window.protocolDirs.allow(fileDir(filePath));
     if (activate) {
       await renderTab(tabs.length - 1);
@@ -2743,7 +2746,7 @@ function showStatus(message: string, type: 'success' | 'error' | 'saving') {
   }
 }
 
-async function exportPDF(): Promise<string | null> {
+async function exportPDF(automaticOutput = false): Promise<string | null> {
   if (activeTabIndex >= 0) {
     const tab = tabs[activeTabIndex];
     
@@ -2766,7 +2769,7 @@ async function exportPDF(): Promise<string | null> {
       margins: marginsIn,
       orientation: pageSettings.orientation,
       pageView: pageSettings.pageView,
-    });
+    }, automaticOutput);
     
     if (savePath) {
       // PDF saved successfully
@@ -2781,6 +2784,97 @@ async function exportPDF(): Promise<string | null> {
     return savePath;
   }
   return null;
+}
+
+interface FolderConversionProgress {
+  completed: number;
+  total: number;
+  failures: string[];
+}
+
+function updateFolderConversionProgress(progress: FolderConversionProgress, currentFileName?: string): void {
+  const label = document.getElementById('folder-conversion-progress-label');
+  const detail = document.getElementById('folder-conversion-progress-detail');
+  const bar = document.getElementById('folder-conversion-progress-bar') as HTMLProgressElement | null;
+  if (!label || !detail || !bar) return;
+
+  label.textContent = progress.completed === progress.total
+    ? (progress.failures.length === 0
+      ? `Converted ${progress.total} Markdown ${progress.total === 1 ? 'file' : 'files'} to PDF.`
+      : `Finished with ${progress.failures.length} failed ${progress.failures.length === 1 ? 'file' : 'files'}.`)
+    : `Converting ${progress.completed + 1} of ${progress.total} Markdown files…`;
+  detail.textContent = currentFileName || (progress.failures.length > 0
+    ? `Failed: ${progress.failures.join(', ')}`
+    : '');
+  bar.max = progress.total;
+  bar.value = progress.completed;
+}
+
+async function convertFolderToPDF(filePaths: string[]): Promise<void> {
+  const modal = document.getElementById('folder-conversion-modal');
+  const closeButton = document.getElementById('folder-conversion-close') as HTMLButtonElement | null;
+  if (!modal || !closeButton) {
+    console.error('[CONVERT] Folder conversion dialog is unavailable.');
+    showStatus('Folder conversion unavailable', 'error');
+    return;
+  }
+
+  if (filePaths.length === 0) {
+    showStatus('No Markdown files found in the selected folder', 'error');
+    return;
+  }
+
+  const originalActiveTabIndex = activeTabIndex;
+  const temporaryTabs: Tab[] = [];
+  const progress: FolderConversionProgress = { completed: 0, total: filePaths.length, failures: [] };
+  closeButton.hidden = true;
+  modal.classList.remove('hidden');
+  updateFolderConversionProgress(progress, 'Preparing conversion…');
+
+  try {
+    for (const filePath of filePaths) {
+      const opened = await openFilePath(filePath, { temporary: true });
+      const temporaryTab = tabs[tabs.length - 1];
+      if (!opened || !temporaryTab) {
+        progress.failures.push(filePath.split(/[/\\]/).pop() || filePath);
+      } else {
+        temporaryTabs.push(temporaryTab);
+        const pdfPath = await exportPDF(true);
+        if (!pdfPath) {
+          progress.failures.push(temporaryTab.title);
+        }
+      }
+      progress.completed++;
+      updateFolderConversionProgress(progress, filePath.split(/[/\\]/).pop() || filePath);
+    }
+  } catch (error) {
+    console.error('[CONVERT] Folder conversion failed:', error);
+    progress.failures.push('Unexpected conversion error');
+  } finally {
+    const temporaryTabSet = new Set(temporaryTabs);
+    const removedTabs = tabs.filter(tab => temporaryTabSet.has(tab));
+    for (let index = tabs.length - 1; index >= 0; index--) {
+      if (temporaryTabSet.has(tabs[index])) {
+        tabs.splice(index, 1);
+      }
+    }
+    await cleanupRemovedTabs(removedTabs);
+
+    if (originalActiveTabIndex >= 0 && tabs[originalActiveTabIndex]) {
+      await renderTab(originalActiveTabIndex);
+    } else {
+      clearActiveDocumentView();
+    }
+    updateTabUI();
+    updateFolderConversionProgress(progress);
+    closeButton.hidden = false;
+    showStatus(
+      progress.failures.length === 0
+        ? `Converted ${progress.total} Markdown files to PDF`
+        : `Converted ${progress.total - progress.failures.length} of ${progress.total} files`,
+      progress.failures.length === 0 ? 'success' : 'error'
+    );
+  }
 }
 
 // Store console logs for debug copying with tab information
@@ -2881,6 +2975,12 @@ window.appVersion().then(version => {
 // Event listeners
 window.menuEvents.onMenuOpen(openFile);
 window.menuEvents.onMenuExportPDF(exportPDF);
+window.menuEvents.onMenuConvertFolderToPDF((filePaths) => {
+  void convertFolderToPDF(filePaths);
+});
+document.getElementById('folder-conversion-close')?.addEventListener('click', () => {
+  document.getElementById('folder-conversion-modal')?.classList.add('hidden');
+});
 window.menuEvents.onMenuCopyDebugLogs(copyDebugLogs);
 window.menuEvents.onMenuSave(async () => {
   await saveActiveTab();

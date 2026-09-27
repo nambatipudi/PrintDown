@@ -63,8 +63,8 @@ contextBridge.exposeInMainWorld('session', {
 
 // Expose export/print APIs
 contextBridge.exposeInMainWorld('printExport', {
-  exportPDF: async (filePath: string, themeData?: any, pageSettings?: any) => {
-    return await ipcRenderer.invoke('export-pdf', filePath, themeData, pageSettings);
+  exportPDF: async (filePath: string, themeData?: any, pageSettings?: any, automaticOutput = false) => {
+    return await ipcRenderer.invoke('export-pdf', filePath, themeData, pageSettings, automaticOutput);
   }
 });
 
@@ -86,7 +86,11 @@ contextBridge.exposeInMainWorld('menuEvents', {
   },
   onMenuExportPDF: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-export-pdf');
-    ipcRenderer.on('menu-export-pdf', callback);
+    ipcRenderer.on('menu-export-pdf', () => callback());
+  },
+  onMenuConvertFolderToPDF: (callback: (filePaths: string[]) => void) => {
+    ipcRenderer.removeAllListeners('menu-convert-folder-to-pdf');
+    ipcRenderer.on('menu-convert-folder-to-pdf', (_event, filePaths: string[]) => callback(filePaths));
   },
   onMenuCopyDebugLogs: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-copy-debug-logs');

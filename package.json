@@ -1,6 +1,6 @@
 {
   "name": "printdown",
-  "version": "1.7.7",
+  "version": "1.7.10",
   "description": "Markdown viewer with MathJax rendering, PDF export, and printing",
   "main": "dist/main.js",
   "scripts": {
@@ -90,6 +90,12 @@
       "icon.png",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "macos/Convert Markdown to PDF.workflow",
+        "to": "Convert Markdown to PDF.workflow"
+      }
+    ],
     "fileAssociations": [
       {
         "ext": "md",
@@ -134,6 +140,7 @@
     "mac": {
       "target": [
         "dmg",
+        "pkg",
         "zip"
       ],
       "icon": "build/icon-mac.png",
@@ -143,6 +150,12 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "pkg": {
+      "scripts": "pkg-scripts",
+      "installLocation": "/Applications",
+      "allowAnywhere": false,
+      "allowCurrentUserHome": false
     },
     "dmg": {
       "title": "${productName} ${version}",

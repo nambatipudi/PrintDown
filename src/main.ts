@@ -102,16 +102,57 @@ function isMarkdownFilePath(filePath: string): boolean {
 
 function parseHeadlessConversionPaths(args: string[]): string[] {
   const argumentIndex = args.indexOf('--convert-to-pdf');
-  if (argumentIndex === -1) {
+  if (argumentIndex !== -1) {
+    return args.slice(argumentIndex + 1)
+      .filter(isMarkdownFilePath)
+      .map(normalizeFilePath);
+  }
+
+  const folderArgumentIndex = args.indexOf('--convert-folder-to-pdf');
+  if (folderArgumentIndex === -1) {
     return [];
   }
-  return args.slice(argumentIndex + 1)
-    .filter(isMarkdownFilePath)
-    .map(normalizeFilePath);
+
+  return args.slice(folderArgumentIndex + 1)
+    .flatMap(collectMarkdownFiles);
 }
 
 function outputPdfPath(markdownPath: string): string {
   return markdownPath.replace(/\.(md|markdown)$/i, '.pdf');
+}
+
+function collectMarkdownFiles(folderPath: string): string[] {
+  try {
+    if (!fs.statSync(folderPath).isDirectory()) {
+      return [];
+    }
+  } catch {
+    return [];
+  }
+
+  const markdownFiles: string[] = [];
+  const directories = [normalizeFilePath(folderPath)];
+  while (directories.length > 0) {
+    const directory = directories.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      console.error(`[CONVERT] Could not inspect directory ${directory}:`, error);
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        directories.push(entryPath);
+      } else if (entry.isFile() && isMarkdownFilePath(entryPath)) {
+        markdownFiles.push(normalizeFilePath(entryPath));
+      }
+    }
+  }
+
+  return markdownFiles.sort((left, right) => left.localeCompare(right));
 }
 
 queuedHeadlessConversionPaths = parseHeadlessConversionPaths(process.argv);
@@ -237,6 +278,27 @@ function createWindow() {
           label: 'Exit',
           accelerator: 'CmdOrCtrl+Q',
           click: () => app.quit()
+        }
+      ]
+    },
+    {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Convert Folder to PDFs...',
+          click: async () => {
+            if (!mainWindow) return;
+            const result = await dialog.showOpenDialog(mainWindow, {
+              title: 'Convert Markdown Folder to PDFs',
+              buttonLabel: 'Convert Folder',
+              properties: ['openDirectory']
+            });
+            if (result.canceled || result.filePaths.length === 0) return;
+
+            const markdownPaths = collectMarkdownFiles(result.filePaths[0]);
+            markdownPaths.forEach(grantFileAccess);
+            mainWindow.webContents.send('menu-convert-folder-to-pdf', markdownPaths);
+          }
         }
       ]
     },
@@ -819,11 +881,16 @@ ipcMain.handle('save-session', (_event, session: SessionData) => {
   }
 });
 
-ipcMain.handle('export-pdf', async (_event, filePath: string, themeData?: any, pageSettings?: { pageSize?: { width: number; height: number }; margins?: { top: number; bottom: number; left: number; right: number }; orientation?: 'portrait' | 'landscape'; pageView?: boolean; }) => {
+ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pageSettings?: { pageSize?: { width: number; height: number }; margins?: { top: number; bottom: number; left: number; right: number }; orientation?: 'portrait' | 'landscape'; pageView?: boolean; }, automaticOutput = false) => {
   if (!mainWindow) return null;
+  if ((headlessConversionPath || automaticOutput) && !canAccessFile(event, filePath)) {
+    console.error(`[PDF] Blocked export for unauthorized file: ${filePath}`);
+    return null;
+  }
   
   const testExportPath = process.env.PLAYWRIGHT_TEST_PDF_PATH;
-  const automaticExportPath = testExportPath || (headlessConversionPath ? outputPdfPath(filePath) : undefined);
+  const automaticExportPath = testExportPath
+    || ((headlessConversionPath || automaticOutput) ? outputPdfPath(filePath) : undefined);
   const result = automaticExportPath
     ? { canceled: false, filePath: automaticExportPath }
     : await dialog.showSaveDialog(mainWindow, {

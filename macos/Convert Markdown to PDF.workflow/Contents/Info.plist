@@ -9,6 +9,30 @@
   <key>CFBundlePackageType</key>
   <string>WFLW</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
+  <string>1.7.10</string>
+  <key>CFBundleVersion</key>
+  <string>1.7.10</string>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Convert Markdown to PDF</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>runWorkflowAsService</string>
+      <key>NSRequiredContext</key>
+      <dict>
+        <key>NSApplicationIdentifier</key>
+        <string>com.apple.finder</string>
+      </dict>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+        <string>public.plain-text</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>

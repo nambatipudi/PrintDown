@@ -55,3 +55,49 @@ test('headless conversion writes adjacent valid PDFs for every argument', async 
     removeTempMd(secondSourcePath);
   }
 });
+
+test('headless folder conversion recursively writes adjacent PDFs', async () => {
+  const rootDirectory = fs.mkdtempSync(path.join(require('os').tmpdir(), 'printdown-folder-conversion-'));
+  const nestedDirectory = path.join(rootDirectory, 'nested');
+  const rootMarkdown = path.join(rootDirectory, 'overview.md');
+  const nestedMarkdown = path.join(nestedDirectory, 'details.markdown');
+  const ignoredFile = path.join(nestedDirectory, 'ignored.txt');
+  fs.mkdirSync(nestedDirectory);
+  fs.writeFileSync(rootMarkdown, '# Folder overview', 'utf-8');
+  fs.writeFileSync(nestedMarkdown, '# Nested details', 'utf-8');
+  fs.writeFileSync(ignoredFile, 'Not Markdown', 'utf-8');
+
+  try {
+    const result = await new Promise<{ exitCode: number | null; stderr: string }>((resolve, reject) => {
+      const child = childProcess.spawn(findPackagedBinary(), ['--convert-folder-to-pdf', rootDirectory], {
+        env: {
+          ...process.env,
+          PLAYWRIGHT_TEST: '',
+          PLAYWRIGHT_TEST_USERDATA: '',
+          ELECTRON_RUN_AS_NODE: '0',
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+      });
+      child.once('error', reject);
+      child.once('close', exitCode => {
+        resolve({ exitCode, stderr });
+      });
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const pdfPath of [
+      rootMarkdown.replace(/\.md$/, '.pdf'),
+      nestedMarkdown.replace(/\.markdown$/, '.pdf'),
+    ]) {
+      const pdf = fs.readFileSync(pdfPath);
+      expect(pdf.subarray(0, 5).toString('ascii')).toBe('%PDF-');
+    }
+    expect(fs.existsSync(ignoredFile.replace(/\.txt$/, '.pdf'))).toBe(false);
+  } finally {
+    fs.rmSync(rootDirectory, { recursive: true, force: true });
+  }
+});
