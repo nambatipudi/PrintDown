@@ -30,3 +30,37 @@ $$
 |---------|------|
 | $a^2 + b^2 = c^2$ | Pythagorean theorem |
 | $F = ma$ | Newton's second law |
+
+## Currency and Literal Dollars
+
+The total is $20,000 and $30,000.
+
+word$x$word
+
+## Escaped and Code-Protected Math
+
+\$x$
+
+`$x$`
+
+```text
+$x$
+```
+
+Real math: $x^2$
+
+## Display Math in Lists
+
+- Item one
+
+  $$
+  \frac{a}{b}
+  $$
+
+- Item two
+
+> Blockquote with math:
+>
+> $$
+> \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+> $$

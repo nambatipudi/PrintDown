@@ -2,6 +2,22 @@
 
 All notable user-facing changes are documented in this file.
 
+## 1.7.12 - 2026-11-16
+
+### Added
+
+- Added **File → Export to EPUB…** (`Cmd/Ctrl+Shift+E`) for exporting the open document as a reflowable EPUB 3 e-book with embedded images, math, and diagrams.
+- Added **Tools → Convert Folder to EPUBs…** for recursively converting a folder's Markdown files to adjacent EPUB files.
+- Added **Tools → Convert Markdown File to EPUB…** for converting a single Markdown file to a sibling EPUB.
+- Added **Tools → Merge Markdown Files…** for combining Markdown documents from any folders into a single file, with reordering and an optional page break between documents.
+
+### Fixed
+
+- Fixed EPUB images appearing as empty boxes on e-readers: SVG content (math formulas, Mermaid diagrams, Draw.io diagrams, and SVG image references) is now rasterized to PNG for maximum e-reader compatibility.
+- Fixed local images failing to load: the `printdown://` handler dropped the leading path separator, and the Markdown sanitizer stripped `printdown:` image sources.
+- Fixed EPUB image compatibility by converting WebP and AVIF assets to PNG and embedding remote HTTP(S) images that do not provide CORS headers.
+- Fixed a preview race where an older render waiting on local-image authorization could overwrite a newer editor update.
+
 ## 1.7.11 - 2026-09-27
 
 ### Added

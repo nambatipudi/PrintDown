@@ -187,3 +187,15 @@ test('menu export writes a non-empty PDF file', async () => {
   expect(pdf.length).toBeGreaterThan(0);
   expect(pdf.subarray(0, 5).toString('ascii')).toBe('%PDF-');
 });
+
+test('menu export preserves rendered MathJax equations', async () => {
+  await openAndWait(app, page, 'math-equations.md');
+  await expect.poll(
+    () => page.locator('#markdown-content mjx-container svg').count(),
+    { timeout: 20_000 },
+  ).toBeGreaterThan(0);
+
+  await sendMenuEvent(app, 'menu-export-pdf');
+  await expect.poll(() => fs.existsSync(exportPath)).toBe(true);
+  await expect(page.locator('#MJX-SVG-global-cache')).toHaveCount(1);
+});

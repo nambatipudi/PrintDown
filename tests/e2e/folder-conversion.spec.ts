@@ -10,7 +10,7 @@ test('Tools folder conversion shows progress and preserves open tabs', async () 
   const firstMarkdown = path.join(rootDirectory, 'first.md');
   const secondMarkdown = path.join(nestedDirectory, 'second.md');
   fs.mkdirSync(nestedDirectory);
-  fs.writeFileSync(firstMarkdown, '# First conversion', 'utf-8');
+  fs.writeFileSync(firstMarkdown, '# First conversion\n\nInline math: $E = mc^2$.', 'utf-8');
   fs.writeFileSync(secondMarkdown, '# Second conversion', 'utf-8');
 
   const { app, page } = await launchApp();

@@ -3,6 +3,9 @@
  * Covers: toggle, CodeMirror init, split view, live preview sync, splitter.
  */
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { launchApp, openAndWait, createTempMd, openFile, removeTempMd } from './helpers/app';
 
 let app: ElectronApplication;
@@ -123,6 +126,47 @@ test('typing in editor updates the preview panel', async () => {
     await disableEditMode(page);
   } finally {
     removeTempMd(fp);
+  }
+});
+
+test('a stale image render cannot overwrite a newer editor update', async () => {
+  const workDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'printdown-render-race-'));
+  const markdownPath = path.join(workDirectory, 'race.md');
+  fs.writeFileSync(
+    path.join(workDirectory, 'dot.png'),
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  fs.writeFileSync(markdownPath, '# Initial preview\n\n![dot](./dot.png)\n', 'utf-8');
+
+  const delayed = await launchApp({ protocolFilesDelayMs: 600 });
+  try {
+    await openFile(delayed.app, markdownPath);
+    const previewImage = delayed.page.locator('#markdown-content img');
+    await expect.poll(() => previewImage.evaluate(element => (element as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+
+    await enableEditMode(delayed.page);
+    const editor = delayed.page.locator('#editor-container .cm-content').first();
+    await editor.click();
+    await delayed.page.keyboard.press('ControlOrMeta+A');
+    await delayed.page.keyboard.insertText('# Stale preview\n\n![dot](./dot.png)\n');
+
+    // Let the first debounced render enter the intentionally delayed IPC call.
+    await delayed.page.waitForTimeout(350);
+
+    await delayed.page.keyboard.press('ControlOrMeta+A');
+    await delayed.page.keyboard.insertText('# Latest preview\n\nNo image remains.\n');
+    await delayed.page.waitForTimeout(1_100);
+
+    await expect(delayed.page.locator('#markdown-content h1')).toHaveText('Latest preview');
+    await expect(delayed.page.locator('#markdown-content')).toContainText('No image remains.');
+    await expect(delayed.page.locator('#markdown-content')).not.toContainText('Stale preview');
+  } finally {
+    await delayed.app.close();
+    fs.rmSync(workDirectory, { recursive: true, force: true });
   }
 });
 

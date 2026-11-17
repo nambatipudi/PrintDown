@@ -52,6 +52,39 @@ test.describe('image rendering', () => {
     await expect(page.locator('#markdown-content')).toBeVisible();
   });
 
+  test('loads a linked image from the Markdown file directory', async () => {
+    const workDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'printdown-linked-image-'));
+    const markdownDirectory = path.join(workDirectory, 'lesson');
+    const imageDirectory = path.join(workDirectory, 'assets', 'images');
+    const markdownPath = path.join(markdownDirectory, 'linked-image.md');
+    const imagePath = path.join(imageDirectory, 'diagram.png');
+    fs.mkdirSync(markdownDirectory, { recursive: true });
+    fs.mkdirSync(imageDirectory, { recursive: true });
+    fs.writeFileSync(
+      imagePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    fs.writeFileSync(
+      markdownPath,
+      '# Linked image\n\n[![Diagram](../assets/images/diagram.png)](https://example.com)\n',
+      'utf-8',
+    );
+
+    try {
+      await openAndWait(app, page, markdownPath);
+
+      const image = page.locator('#markdown-content a[href="https://example.com"] img');
+      await expect(image).toHaveAttribute('src', /^printdown:/);
+      await expect.poll(() => image.evaluate(element => (element as HTMLImageElement).naturalWidth))
+        .toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(workDirectory, { recursive: true, force: true });
+    }
+  });
+
   test('SVG_Support_Test renders without crash', async () => {
     await openAndWait(app, page, '../../../Test_Files/SVG_Support_Test.md', { extraMs: 500 });
     await expect(page.locator('#markdown-content h1, #markdown-content h2').first()).toBeVisible();

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, protocol, shell }
 import * as path from 'path';
 import * as fs from 'fs';
 import Store from 'electron-store';
+import { buildEpub, EpubPayload } from './epub';
 
 interface SessionData {
   openFiles: string[];
@@ -61,6 +62,7 @@ const fileStats = new Map<string, { mtime: Date; size: number }>();
 // Allowed base directories for the printdown:// protocol.
 // Only files within these directories (and their subdirectories) can be served.
 const allowedProtocolDirs = new Set<string>();
+const allowedProtocolFilesByDocument = new Map<string, Set<string>>();
 const authorizedFilePaths = new Set<string>();
 
 function normalizeFilePath(filePath: string): string {
@@ -202,7 +204,7 @@ function createWindow() {
     ...(iconPath && { icon: iconPath }), // Only set icon for Windows/Linux
     backgroundColor: '#1e1e1e', // Set explicit background color to prevent white showing through
     titleBarStyle: 'default', // Ensure consistent title bar
-    show: !headlessConversionPath,
+    show: !headlessConversionPath && process.env.PLAYWRIGHT_TEST !== '1',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -211,6 +213,10 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  if (process.env.PLAYWRIGHT_TEST === '1' && !headlessConversionPath) {
+    // showInactive() keeps the window unfocused so it cannot grab input.
+    mainWindow.once('ready-to-show', () => mainWindow?.showInactive());
+  }
   if (headlessConversionPath) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(startNextHeadlessConversion, 250);
@@ -273,6 +279,13 @@ function createWindow() {
           enabled: false,
           click: () => mainWindow?.webContents.send('menu-export-pdf')
         },
+        {
+          id: 'file-export-epub',
+          label: 'Export to EPUB...',
+          accelerator: 'CmdOrCtrl+Shift+E',
+          enabled: false,
+          click: () => mainWindow?.webContents.send('menu-export-epub')
+        },
         { type: 'separator' },
         {
           label: 'Exit',
@@ -284,6 +297,24 @@ function createWindow() {
     {
       label: 'Tools',
       submenu: [
+        {
+          label: 'Convert Markdown File to EPUB...',
+          click: async () => {
+            if (!mainWindow) return;
+            const result = await dialog.showOpenDialog(mainWindow, {
+              title: 'Convert Markdown File to EPUB',
+              buttonLabel: 'Convert File',
+              properties: ['openFile'],
+              filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }]
+            });
+            if (result.canceled || result.filePaths.length === 0) return;
+
+            const filePath = result.filePaths[0];
+            grantFileAccess(filePath);
+            mainWindow.webContents.send('menu-convert-file-to-epub', filePath);
+          }
+        },
+        { type: 'separator' },
         {
           label: 'Convert Folder to PDFs...',
           click: async () => {
@@ -299,6 +330,27 @@ function createWindow() {
             markdownPaths.forEach(grantFileAccess);
             mainWindow.webContents.send('menu-convert-folder-to-pdf', markdownPaths);
           }
+        },
+        {
+          label: 'Convert Folder to EPUBs...',
+          click: async () => {
+            if (!mainWindow) return;
+            const result = await dialog.showOpenDialog(mainWindow, {
+              title: 'Convert Markdown Folder to EPUBs',
+              buttonLabel: 'Convert Folder',
+              properties: ['openDirectory']
+            });
+            if (result.canceled || result.filePaths.length === 0) return;
+
+            const markdownPaths = collectMarkdownFiles(result.filePaths[0]);
+            markdownPaths.forEach(grantFileAccess);
+            mainWindow.webContents.send('menu-convert-folder-to-epub', markdownPaths);
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Merge Markdown Files...',
+          click: () => mainWindow?.webContents.send('menu-merge-markdown')
         }
       ]
     },
@@ -527,7 +579,7 @@ function createWindow() {
               type: 'info',
               title: 'About Print Down',
               message: 'Print Down',
-              detail: `Version: ${app.getVersion()}\n\nA beautiful Markdown viewer and PDF exporter with:\n• Live preview with themes\n• Math equations (MathJax)\n• Mermaid diagrams\n• UML sequence diagrams\n• Draw.io XML rendering (powered by diagrams.net)\n• Adjustable font size\n• Export to PDF with proper margins\n\nCredits:\n• diagrams.net / draw.io (Apache License 2.0)\n\nCreated by: Nambatipudi\nGitHub: https://github.com/nambatipudi`,
+              detail: `Version: ${app.getVersion()}\n\nA beautiful Markdown viewer and PDF exporter with:\n• Live preview with themes\n• Math equations (MathJax)\n• Mermaid diagrams\n• UML sequence diagrams\n• Draw.io XML rendering (powered by diagrams.net)\n• Adjustable font size\n• Export to PDF with proper margins\n• Export to EPUB for e-readers\n\nCredits:\n• diagrams.net / draw.io (Apache License 2.0)\n\nCreated by: Nambatipudi\nGitHub: https://github.com/nambatipudi`,
               buttons: ['OK']
             });
           }
@@ -581,9 +633,10 @@ function setFileActionMenuEnabled(enabled: boolean) {
 
   let saveItem = menu.getMenuItemById('file-save');
   let exportItem = menu.getMenuItemById('file-export-pdf');
+  let exportEpubItem = menu.getMenuItemById('file-export-epub');
 
   // Fallback lookup by label in case menu item IDs are not preserved on a platform.
-  if (!saveItem || !exportItem) {
+  if (!saveItem || !exportItem || !exportEpubItem) {
     const fileMenu = menu.items.find(item => item.label === 'File');
     if (fileMenu?.submenu) {
       if (!saveItem) {
@@ -592,11 +645,15 @@ function setFileActionMenuEnabled(enabled: boolean) {
       if (!exportItem) {
         exportItem = fileMenu.submenu.items.find(item => item.label === 'Export to PDF...') ?? null;
       }
+      if (!exportEpubItem) {
+        exportEpubItem = fileMenu.submenu.items.find(item => item.label === 'Export to EPUB...') ?? null;
+      }
     }
   }
 
   if (saveItem) saveItem.enabled = enabled;
   if (exportItem) exportItem.enabled = enabled;
+  if (exportEpubItem) exportEpubItem.enabled = enabled;
 }
 
 // Handle file opening from command line or double-click
@@ -633,6 +690,13 @@ if (!gotTheLock) {
 app.whenReady().then(() => {
   // Log app version on startup
   console.log(`[APP] PrintDown starting, version: ${app.getVersion()}`);
+
+  // Under automation, run as an accessory app so the test window never steals
+  // the user's keyboard/mouse focus. Playwright drives the renderer over CDP,
+  // which does not require the window to be frontmost.
+  if (process.env.PLAYWRIGHT_TEST === '1' && process.platform === 'darwin') {
+    app.dock?.hide();
+  }
   
   // Set up custom protocol handler for local file access
   const protocolSuccess = protocol.registerFileProtocol('printdown', (request, callback) => {
@@ -640,6 +704,12 @@ app.whenReady().then(() => {
     let url = request.url.replace(/^printdown:\/\//, '');
     
     try {
+      // Renderer URLs use a fixed host so absolute paths remain in the URL
+      // pathname without Chromium lowercasing their first segment.
+      if (url.startsWith('local/')) {
+        url = url.slice('local'.length);
+      }
+
       // Handle URL-encoded paths
       url = decodeURIComponent(url);
       
@@ -674,18 +744,22 @@ app.whenReady().then(() => {
           normalizedPath = path.resolve(url);
         }
       } else {
-        // Unix-like systems
-        normalizedPath = path.resolve(url);
+        // Unix-like systems. Because `printdown` is a standard scheme, Chromium
+        // collapses `printdown:///abs/path` into `printdown://abs/path`, so the
+        // leading separator has to be restored before resolving.
+        normalizedPath = path.resolve(url.startsWith('/') ? url : `/${url}`);
       }
 
       // Only serve files that live inside an explicitly granted document directory.
       // An empty allowlist must deny all requests rather than opening the filesystem.
       const sep = path.sep;
-      const isAllowed = [...allowedProtocolDirs].some(allowedDir => {
+      const isAllowedDirectory = [...allowedProtocolDirs].some(allowedDir => {
         const base = allowedDir.endsWith(sep) ? allowedDir : allowedDir + sep;
         return normalizedPath.startsWith(base) || normalizedPath === allowedDir;
       });
-      if (!isAllowed) {
+      const isAllowedFile = [...allowedProtocolFilesByDocument.values()]
+        .some(files => files.has(normalizedPath));
+      if (!isAllowedDirectory && !isAllowedFile) {
         console.error(`[PROTOCOL] Blocked request outside allowed dirs: ${normalizedPath}`);
         callback({ error: -10 }); // ACCESS_DENIED
         return;
@@ -814,6 +888,77 @@ ipcMain.handle('open-file-dialog', async (event) => {
   } catch (error) {
     console.error('Dialog error:', error);
     return { canceled: true, filePaths: [] };
+  }
+});
+
+// Test hooks stand in for the native dialogs, which would block an automated run.
+// The sentinel value lets a test exercise the "user cancelled" path.
+const AUTOMATION_CANCEL = '__CANCEL__';
+
+function automationOverride(variable: string): string | undefined {
+  return process.env.PLAYWRIGHT_TEST === '1' ? process.env[variable] : undefined;
+}
+
+ipcMain.handle('pick-markdown-files', async (event) => {
+  if (!isTrustedAppSender(event)) {
+    return { canceled: true, filePaths: [] };
+  }
+  const testPickPaths = automationOverride('PLAYWRIGHT_TEST_MERGE_PICK_PATHS');
+  if (testPickPaths) {
+    if (testPickPaths === AUTOMATION_CANCEL) {
+      return { canceled: true, filePaths: [] };
+    }
+    const filePaths = testPickPaths.split(path.delimiter).filter(Boolean);
+    filePaths.forEach(grantFileAccess);
+    return { canceled: filePaths.length === 0, filePaths };
+  }
+  try {
+    await new Promise(resolve => process.nextTick(resolve));
+    const result = await dialog.showOpenDialog({
+      title: 'Add Markdown Files',
+      buttonLabel: 'Add',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Markdown', extensions: ['md', 'markdown'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    result.filePaths.forEach(grantFileAccess);
+    return result;
+  } catch (error) {
+    console.error('[MERGE] File picker failed:', error);
+    return { canceled: true, filePaths: [] };
+  }
+});
+
+ipcMain.handle('pick-merge-destination', async (event, defaultFileName: string) => {
+  if (!isTrustedAppSender(event)) {
+    return { canceled: true };
+  }
+
+  const testSavePath = automationOverride('PLAYWRIGHT_TEST_MERGE_SAVE_PATH');
+  if (testSavePath) {
+    if (testSavePath === AUTOMATION_CANCEL) {
+      return { canceled: true };
+    }
+    grantFileAccess(testSavePath);
+    return { canceled: false, filePath: testSavePath };
+  }
+
+  try {
+    const result = await dialog.showSaveDialog({
+      title: 'Save Merged Markdown',
+      defaultPath: defaultFileName || 'merged.md',
+      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }]
+    });
+    if (result.canceled || !result.filePath) {
+      return { canceled: true };
+    }
+    grantFileAccess(result.filePath);
+    return { canceled: false, filePath: result.filePath };
+  } catch (error) {
+    console.error('[MERGE] Save dialog failed:', error);
+    return { canceled: true };
   }
 });
 
@@ -1095,6 +1240,11 @@ ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pa
         if (originalParent) {
           originalParent.insertBefore(placeholder, markdownContent);
         }
+        const mathJaxFontCache = document.getElementById('MJX-SVG-global-cache');
+        const mathJaxCachePlaceholder = document.createComment('pdf-mathjax-cache-placeholder');
+        if (mathJaxFontCache && mathJaxFontCache.parentNode) {
+          mathJaxFontCache.parentNode.insertBefore(mathJaxCachePlaceholder, mathJaxFontCache);
+        }
 
         const exportRoot = document.createElement('div');
         exportRoot.id = 'pdf-export-root';
@@ -1104,6 +1254,9 @@ ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pa
         exportRoot.style.overflow = 'visible';
 
         document.body.appendChild(exportRoot);
+        if (mathJaxFontCache) {
+          exportRoot.appendChild(mathJaxFontCache);
+        }
         exportRoot.appendChild(markdownContent);
 
         const hiddenBodyChildren = [];
@@ -1115,6 +1268,8 @@ ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pa
 
         window._pdfOriginalStyles.exportRoot = exportRoot;
         window._pdfOriginalStyles.markdownPlaceholder = placeholder;
+        window._pdfOriginalStyles.mathJaxFontCache = mathJaxFontCache;
+        window._pdfOriginalStyles.mathJaxCachePlaceholder = mathJaxCachePlaceholder;
         window._pdfOriginalStyles.hiddenBodyChildren = hiddenBodyChildren;
 
         // Force viewer-only layout so PDF includes rendered markdown only.
@@ -1218,6 +1373,15 @@ ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pa
                   entry.node.style.display = entry.display;
                 }
               });
+            }
+
+            if (styles.mathJaxCachePlaceholder && styles.mathJaxFontCache
+                && styles.mathJaxCachePlaceholder.parentNode) {
+              styles.mathJaxCachePlaceholder.parentNode.insertBefore(
+                styles.mathJaxFontCache,
+                styles.mathJaxCachePlaceholder
+              );
+              styles.mathJaxCachePlaceholder.remove();
             }
 
             if (styles.markdownPlaceholder && markdownContent && styles.markdownPlaceholder.parentNode) {
@@ -1338,8 +1502,112 @@ ipcMain.handle('export-pdf', async (event, filePath: string, themeData?: any, pa
   }
 });
 
-ipcMain.handle('clipboard-write', async (_event, text: string) => {
+const MAX_REMOTE_EPUB_IMAGE_BYTES = 20 * 1024 * 1024;
+const REMOTE_EPUB_IMAGE_TIMEOUT_MS = 15_000;
+
+ipcMain.handle('fetch-epub-image', async (event, filePath: string, source: string) => {
+  if (!canAccessFile(event, filePath)) {
+    console.error(`[EPUB] Blocked remote image fetch for unauthorized file: ${filePath}`);
+    return { success: false, error: 'The document is not authorized to export images' };
+  }
+
+  if (typeof source !== 'string') {
+    return { success: false, error: 'The image URL must be a string' };
+  }
+
+  let url: URL;
   try {
+    url = new URL(source);
+  } catch {
+    return { success: false, error: 'The image URL is invalid' };
+  }
+
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
+    return { success: false, error: 'Only credential-free HTTP(S) image URLs can be exported' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REMOTE_EPUB_IMAGE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    if (!response.ok) {
+      return { success: false, error: `Image server returned HTTP ${response.status}` };
+    }
+
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_REMOTE_EPUB_IMAGE_BYTES) {
+      return { success: false, error: 'Image exceeds the 20 MB EPUB export limit' };
+    }
+
+    const imageData = Buffer.from(await response.arrayBuffer());
+    if (imageData.length > MAX_REMOTE_EPUB_IMAGE_BYTES) {
+      return { success: false, error: 'Image exceeds the 20 MB EPUB export limit' };
+    }
+
+    const mediaType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+    return { success: true, base64: imageData.toString('base64'), mediaType };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[EPUB] Failed to retrieve remote image ${url.toString()}: ${message}`);
+    return { success: false, error: message };
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
+ipcMain.handle('export-epub', async (event, filePath: string, payload: EpubPayload, automaticOutput = false) => {
+  if (!canAccessFile(event, filePath)) {
+    console.error(`[EPUB] Blocked export for unauthorized file: ${filePath}`);
+    return null;
+  }
+
+  const defaultPath = filePath.replace(/\.(md|markdown)$/i, '.epub');
+  let savePath = defaultPath;
+
+  if (!automaticOutput) {
+    const testExportPath = process.env.PLAYWRIGHT_TEST_EPUB_PATH;
+    if (testExportPath) {
+      savePath = testExportPath;
+    } else {
+      const result = await dialog.showSaveDialog({
+        defaultPath,
+        filters: [{ name: 'EPUB', extensions: ['epub'] }]
+      });
+      if (result.canceled || !result.filePath) {
+        return null;
+      }
+      savePath = result.filePath;
+    }
+  }
+
+  const temporaryPath = `${savePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    const epubData = buildEpub(payload || {});
+    await fs.promises.writeFile(temporaryPath, epubData);
+    await fs.promises.rename(temporaryPath, savePath);
+    console.log('[EPUB] File written successfully:', savePath, epubData.length, 'bytes');
+
+    if (!process.env.PLAYWRIGHT_TEST && !automaticOutput) {
+      const openError = await shell.openPath(savePath);
+      if (openError) {
+        console.error('[EPUB] Failed to open EPUB:', openError);
+      }
+    }
+
+    return savePath;
+  } catch (error) {
+    await fs.promises.rm(temporaryPath, { force: true });
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('[EPUB] Failed to generate EPUB:', errorMsg);
+    if (!automaticOutput) {
+      dialog.showErrorBox('EPUB Export Failed', `Failed to save EPUB file: ${errorMsg}`);
+    }
+    return null;
+  }
+});
+
+ipcMain.handle('clipboard-write', async (_event, text: string) => {  try {
     clipboard.writeText(text);
     return { success: true };
   } catch (error) {
@@ -1540,5 +1808,53 @@ ipcMain.handle('allow-protocol-dir', (event, dirPath: string) => {
 ipcMain.handle('disallow-protocol-dir', (event, dirPath: string) => {
   if (isTrustedAppSender(event)) {
     allowedProtocolDirs.delete(normalizeFilePath(dirPath));
+  }
+});
+
+const LOCAL_IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp']);
+const testProtocolFilesDelayMs = process.env.PLAYWRIGHT_TEST === '1'
+  ? Math.max(0, Math.min(Number(process.env.PLAYWRIGHT_TEST_PROTOCOL_FILES_DELAY_MS) || 0, 5_000))
+  : 0;
+
+ipcMain.handle('allow-protocol-files', async (event, documentPath: string, filePaths: string[]) => {
+  if (!isTrustedAppSender(event) || !isAuthorizedFilePath(documentPath) || !Array.isArray(filePaths)) {
+    console.error('[PROTOCOL] Refused to authorize local image files for an untrusted document.');
+    return [];
+  }
+
+  if (testProtocolFilesDelayMs > 0) {
+    await new Promise<void>(resolve => setTimeout(resolve, testProtocolFilesDelayMs));
+  }
+
+  const authorizedFiles = new Set<string>();
+  for (const filePath of filePaths) {
+    if (typeof filePath !== 'string') {
+      continue;
+    }
+
+    const normalizedPath = normalizeFilePath(filePath);
+    if (!LOCAL_IMAGE_EXTENSIONS.has(path.extname(normalizedPath).toLowerCase())) {
+      console.error(`[PROTOCOL] Refused non-image file: ${normalizedPath}`);
+      continue;
+    }
+
+    try {
+      if (fs.statSync(normalizedPath).isFile()) {
+        authorizedFiles.add(normalizedPath);
+      } else {
+        console.error(`[PROTOCOL] Refused non-file image path: ${normalizedPath}`);
+      }
+    } catch {
+      console.error(`[PROTOCOL] Referenced image was not found: ${normalizedPath}`);
+    }
+  }
+
+  allowedProtocolFilesByDocument.set(normalizeFilePath(documentPath), authorizedFiles);
+  return [...authorizedFiles];
+});
+
+ipcMain.handle('disallow-protocol-files', (event, documentPath: string) => {
+  if (isTrustedAppSender(event)) {
+    allowedProtocolFilesByDocument.delete(normalizeFilePath(documentPath));
   }
 });

@@ -65,6 +65,12 @@ contextBridge.exposeInMainWorld('session', {
 contextBridge.exposeInMainWorld('printExport', {
   exportPDF: async (filePath: string, themeData?: any, pageSettings?: any, automaticOutput = false) => {
     return await ipcRenderer.invoke('export-pdf', filePath, themeData, pageSettings, automaticOutput);
+  },
+  exportEPUB: async (filePath: string, payload: any, automaticOutput = false) => {
+    return await ipcRenderer.invoke('export-epub', filePath, payload, automaticOutput);
+  },
+  fetchEPUBImage: async (filePath: string, source: string) => {
+    return await ipcRenderer.invoke('fetch-epub-image', filePath, source);
   }
 });
 
@@ -78,6 +84,16 @@ contextBridge.exposeInMainWorld('headlessConversion', {
   }
 });
 
+// Expose Markdown merge APIs
+contextBridge.exposeInMainWorld('markdownMerge', {
+  pickFiles: async () => {
+    const result = await ipcRenderer.invoke('pick-markdown-files');
+    return result.canceled ? [] : result.filePaths;
+  },
+  pickDestination: async (defaultFileName: string) => {
+    return await ipcRenderer.invoke('pick-merge-destination', defaultFileName);
+  }
+});
 // Expose menu event listeners
 contextBridge.exposeInMainWorld('menuEvents', {
   onMenuOpen: (callback: () => void) => {
@@ -91,6 +107,22 @@ contextBridge.exposeInMainWorld('menuEvents', {
   onMenuConvertFolderToPDF: (callback: (filePaths: string[]) => void) => {
     ipcRenderer.removeAllListeners('menu-convert-folder-to-pdf');
     ipcRenderer.on('menu-convert-folder-to-pdf', (_event, filePaths: string[]) => callback(filePaths));
+  },
+  onMenuExportEPUB: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-export-epub');
+    ipcRenderer.on('menu-export-epub', () => callback());
+  },
+  onMenuConvertFileToEPUB: (callback: (filePath: string) => void) => {
+    ipcRenderer.removeAllListeners('menu-convert-file-to-epub');
+    ipcRenderer.on('menu-convert-file-to-epub', (_event, filePath: string) => callback(filePath));
+  },
+  onMenuConvertFolderToEPUB: (callback: (filePaths: string[]) => void) => {
+    ipcRenderer.removeAllListeners('menu-convert-folder-to-epub');
+    ipcRenderer.on('menu-convert-folder-to-epub', (_event, filePaths: string[]) => callback(filePaths));
+  },
+  onMenuMergeMarkdown: (callback: () => void) => {
+    ipcRenderer.removeAllListeners('menu-merge-markdown');
+    ipcRenderer.on('menu-merge-markdown', () => callback());
   },
   onMenuCopyDebugLogs: (callback: () => void) => {
     ipcRenderer.removeAllListeners('menu-copy-debug-logs');
@@ -154,6 +186,9 @@ contextBridge.exposeInMainWorld('themeAPI', {
 contextBridge.exposeInMainWorld('protocolDirs', {
   allow: (dirPath: string) => ipcRenderer.invoke('allow-protocol-dir', dirPath),
   disallow: (dirPath: string) => ipcRenderer.invoke('disallow-protocol-dir', dirPath),
+  allowFiles: (documentPath: string, filePaths: string[]) =>
+    ipcRenderer.invoke('allow-protocol-files', documentPath, filePaths) as Promise<string[]>,
+  disallowFiles: (documentPath: string) => ipcRenderer.invoke('disallow-protocol-files', documentPath),
 });
 
 // Expose file watching APIs

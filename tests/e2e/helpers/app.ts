@@ -27,13 +27,24 @@ function findPackagedBinary(): string {
  *  @param userDataDir Optional fixed userData directory. When provided (e.g. for session
  *  restore tests), PLAYWRIGHT_TEST_USERDATA is set so main.ts uses this dir instead of
  *  creating a fresh tmpdir per PID. */
+/** Sentinel that makes a test-hooked native dialog report "cancelled". */
+export const AUTOMATION_CANCEL = '__CANCEL__';
+
 export async function launchApp(
   {
     userDataDir,
     pdfExportPath,
+    epubExportPath,
+    mergePickPaths,
+    mergeSavePath,
+    protocolFilesDelayMs,
   }: {
     userDataDir?: string;
     pdfExportPath?: string;
+    epubExportPath?: string;
+    mergePickPaths?: string[];
+    mergeSavePath?: string;
+    protocolFilesDelayMs?: number;
   } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const executablePath = findPackagedBinary();
@@ -44,6 +55,12 @@ export async function launchApp(
   };
   if (userDataDir) env.PLAYWRIGHT_TEST_USERDATA = userDataDir;
   if (pdfExportPath) env.PLAYWRIGHT_TEST_PDF_PATH = pdfExportPath;
+  if (epubExportPath) env.PLAYWRIGHT_TEST_EPUB_PATH = epubExportPath;
+  if (mergePickPaths) env.PLAYWRIGHT_TEST_MERGE_PICK_PATHS = mergePickPaths.join(path.delimiter);
+  if (mergeSavePath) env.PLAYWRIGHT_TEST_MERGE_SAVE_PATH = mergeSavePath;
+  if (protocolFilesDelayMs !== undefined) {
+    env.PLAYWRIGHT_TEST_PROTOCOL_FILES_DELAY_MS = String(protocolFilesDelayMs);
+  }
   const app = await electron.launch({ executablePath, env });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');

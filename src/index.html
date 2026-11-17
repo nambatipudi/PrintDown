@@ -832,6 +832,58 @@
     .unit-label { font-size: 12px; color: #999; }
     .checkbox { display: flex; align-items: center; gap: 8px; }
 
+    /* Merge Markdown modal */
+    .merge-modal-content { min-width: 560px; max-width: 640px; }
+    .merge-hint { margin: 0; font-size: 12px; color: #999; }
+    #merge-file-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #444;
+      border-radius: 4px;
+    }
+    #merge-file-list:empty { display: none; }
+    #merge-file-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-bottom: 1px solid #333;
+    }
+    #merge-file-list li:last-child { border-bottom: none; }
+    .merge-file-index { font-size: 12px; color: #999; min-width: 1.5em; }
+    .merge-file-info { flex: 1; min-width: 0; }
+    .merge-file-name { font-size: 13px; overflow-wrap: anywhere; }
+    .merge-file-dir { font-size: 11px; color: #999; overflow-wrap: anywhere; }
+    .merge-file-actions { display: flex; gap: 4px; }
+    .merge-file-actions button {
+      background: #333;
+      color: #f5f5f5;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .merge-file-actions button:disabled { opacity: 0.4; cursor: default; }
+    #merge-add-files, #merge-clear-files {
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid #555;
+      background: #333;
+      color: #f5f5f5;
+      cursor: pointer;
+    }
+    #merge-empty-message, #merge-status-message {
+      margin: 0;
+      font-size: 12px;
+      color: #999;
+      min-height: 1.2em;
+    }
+    #merge-status-message.error { color: #ff8a80; }
+
     /* Page view styling */
     #content.page-view-active {
       background: var(--page-paper-bg, #ffffff);
@@ -1127,8 +1179,8 @@
   <script>
     window.MathJax = {
       tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$','$$'], ['\\[','\\]']],
+        inlineMath: [['\\(', '\\)']],
+        displayMath: [['\\[', '\\]']],
         processEscapes: true,
         packages: {'[+]': ['base', 'ams', 'mathtools', 'color', 'cancel', 'bbox', 'mhchem', 'physics']},
         macros: {
@@ -1262,6 +1314,34 @@
       </div>
     </div>
   </div>
-  
+    <div id="merge-markdown-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="merge-markdown-title">
+    <div class="modal-content merge-modal-content">
+      <div class="modal-header">
+        <h3 id="merge-markdown-title">Merge Markdown Files</h3>
+        <button id="merge-markdown-close" title="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="merge-hint">Files are merged top to bottom. Add files from any folder, then reorder them.</p>
+        <ul id="merge-file-list" aria-label="Files to merge"></ul>
+        <p id="merge-empty-message">No files added yet.</p>
+        <div class="inline-row">
+          <button id="merge-add-files">Add files…</button>
+          <button id="merge-clear-files">Clear all</button>
+        </div>
+        <div class="form-row">
+          <label class="checkbox">
+            <input type="checkbox" id="merge-page-break" checked />
+            Start each file on a new page
+          </label>
+        </div>
+        <p id="merge-status-message" aria-live="polite"></p>
+      </div>
+      <div class="modal-footer">
+        <button id="merge-cancel">Cancel</button>
+        <button id="merge-confirm" class="primary">Merge…</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

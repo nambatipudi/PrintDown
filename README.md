@@ -86,7 +86,7 @@ inline using diagrams.net technology.
 
 ### Images and print layout
 
-PNG, JPG, GIF, WebP, and SVG images are supported. Relative paths resolve
+PNG, JPG, GIF, WebP, AVIF, and SVG images are supported. Relative paths resolve
 from the Markdown file, so they travel well with a document folder. Hover an
 image or Mermaid diagram to resize it, reposition it left/center/right, or
 double-click it to reset its layout.
@@ -140,6 +140,20 @@ Open **Page Setup** (the `📄` toolbar button) to choose:
 
 The same page-dimension model drives Page View and PDF export.
 
+### Export to EPUB
+
+Choose **File → Export to EPUB…** (`Cmd/Ctrl+Shift+E`) to produce a reflowable
+EPUB 3 e-book beside the document.
+
+- Each top-level `#` heading becomes its own chapter in the reading order and
+  table of contents.
+- Rendered math and diagrams are embedded as inline SVG, and referenced images
+  are copied into the book so it stays self-contained and works offline. WebP
+  and AVIF images are converted to PNG for compatibility with EPUB readers.
+- The active theme supplies the book's typography and colors.
+- Page Setup does not apply, because EPUB content reflows to the reader's
+  screen rather than to a fixed page size.
+
 #### Choose a print theme
 
 **View → Theme** includes 28 themes: general reading themes, six curated
@@ -192,6 +206,27 @@ The utility shows a progress bar, identifies the current document, reports
 failures, and cleans up its temporary workspace when complete. It preserves
 your open documents and unsaved edits.
 
+Choose **Tools → Convert Folder to EPUBs…** to run the same recursive
+conversion and write an `.epub` beside each source file instead.
+
+### Merge several Markdown files
+
+Choose **Tools → Merge Markdown Files…** to combine documents into one file.
+
+1. Click **Add files…** as many times as you need — the picker supports
+   multi-select, and files may come from different folders.
+2. Reorder the list with the **↑** and **↓** buttons, or drop entries with
+   **Remove**. Files are merged top to bottom.
+3. Leave **Start each file on a new page** checked to insert a hard page break
+   between documents, so each source file begins on a fresh page in the
+   exported PDF. Uncheck it to run the documents together.
+4. Choose where to save the merged file. Print Down writes it and opens it in a
+   new tab.
+
+Relative image paths are rewritten so they keep resolving from the merged
+file's own folder. Only the first YAML front matter block is kept, so custom
+math macros defined at the top of the first document still apply.
+
 ---
 
 ## Themes, privacy, and reliability
@@ -223,6 +258,7 @@ source changes; dirty tabs prompt you to keep local edits or reload the file.
 | Open file | `Cmd/Ctrl+O` |
 | Save | `Cmd/Ctrl+S` |
 | Export to PDF | `Cmd/Ctrl+P` |
+| Export to EPUB | `Cmd/Ctrl+Shift+E` |
 | Increase font | `Cmd/Ctrl+=` |
 | Decrease font | `Cmd/Ctrl+-` |
 | Reset font | `Cmd/Ctrl+0` |

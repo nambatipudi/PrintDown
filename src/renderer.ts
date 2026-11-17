@@ -1,5 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import texmath from 'markdown-it-texmath';
+import vscodeKatex from '@vscode/markdown-it-katex';
 import DOMPurify from 'dompurify';
 import { Graph, ModelXmlSerializer } from '@maxgraph/core';
 // CodeMirror imports
@@ -18,6 +18,10 @@ declare global {
     filePicker: {
       pickFile: () => Promise<string[] | null>;
     };
+    markdownMerge: {
+      pickFiles: () => Promise<string[]>;
+      pickDestination: (defaultFileName: string) => Promise<{ canceled: boolean; filePath?: string }>;
+    };
     fileSystem: {
       readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
       writeFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>;
@@ -30,6 +34,13 @@ declare global {
     };
     printExport: {
       exportPDF: (filePath: string, themeData?: any, pageSettings?: any, automaticOutput?: boolean) => Promise<string | null>;
+      exportEPUB: (filePath: string, payload: any, automaticOutput?: boolean) => Promise<string | null>;
+      fetchEPUBImage: (filePath: string, source: string) => Promise<{
+        success: boolean;
+        base64?: string;
+        mediaType?: string;
+        error?: string;
+      }>;
     };
     headlessConversion: {
       onStart: (callback: (filePath: string) => void) => void;
@@ -39,6 +50,10 @@ declare global {
       onMenuOpen: (callback: () => void) => void;
       onMenuExportPDF: (callback: () => void) => void;
       onMenuConvertFolderToPDF: (callback: (filePaths: string[]) => void) => void;
+      onMenuExportEPUB: (callback: () => void) => void;
+      onMenuConvertFileToEPUB: (callback: (filePath: string) => void) => void;
+      onMenuConvertFolderToEPUB: (callback: (filePaths: string[]) => void) => void;
+      onMenuMergeMarkdown: (callback: () => void) => void;
       onMenuCopyDebugLogs: (callback: () => void) => void;
       onRestoreSession: (callback: (event: any, session: any) => void) => void;
       onOpenFileFromSystem: (callback: (event: any, filePath: string) => void) => void;
@@ -61,6 +76,8 @@ declare global {
     protocolDirs: {
       allow: (dirPath: string) => Promise<void>;
       disallow: (dirPath: string) => Promise<void>;
+      allowFiles: (documentPath: string, filePaths: string[]) => Promise<string[]>;
+      disallowFiles: (documentPath: string) => Promise<void>;
     };
     fileWatch: {
       watchFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -128,51 +145,6 @@ const defaultPageSettings: PageSettings = {
   pageView: false,
 };
 
-// Normalize stray square-bracket math blocks into $$...$$ so they render without visible brackets.
-function normalizeBracketMath(md: string): string {
-  // Match blocks that start at line beginning with '[' and end with ']' on their own line
-  return md.replace(/(^|\n)\[\s*\n([\s\S]*?)\n\]\s*(\n|$)/g, (_m, lead, inner, trail) => {
-    const trimmed = inner.trim();
-    return `${lead}$$\n${trimmed}\n$$${trail}`;
-  });
-}
-
-function isLikelyMathContent(content: string): boolean {
-  const trimmed = content.trim().replace(/^\$+|\$+$/g, '').trim();
-  if (!trimmed) return false;
-  return /\\[A-Za-z]+|[\^_=]|\d\s*[/+*=<>-]\s*\d|\\(?:times|cdot|frac|dfrac|tfrac|sqrt|left|right|overline|neq|approx|subset|ge|le|in|mathbb|text)/.test(trimmed);
-}
-
-function normalizeEscapedMathDelimiters(md: string): string {
-  const normalizeMathContent = (content: string) =>
-    content
-      .trim()
-      .replace(/^\$+|\$+$/g, '')
-      .trim()
-      // Some generated Markdown escapes TeX commands as \\frac inside \( ... \).
-      // MathJax expects a single command backslash.
-      .replace(/\\\\(?=[A-Za-z])/g, '\\');
-
-  const normalizeInline = (_match: string, inner: string) => {
-    const trimmed = normalizeMathContent(inner);
-    if (!trimmed) return '';
-    return isLikelyMathContent(trimmed) ? `$${trimmed}$` : trimmed;
-  };
-
-  const normalizeBlock = (_match: string, inner: string) => {
-    const trimmed = normalizeMathContent(inner);
-    if (!trimmed) return '';
-    return isLikelyMathContent(trimmed) ? `$$\n${trimmed}\n$$` : trimmed;
-  };
-
-  return md
-    .replace(/\\+\(([\s\S]*?)\\+\)/g, normalizeInline)
-    .replace(/\\+\[([\s\S]*?)\\+\]/g, normalizeBlock);
-}
-
-function normalizeMathDelimiters(md: string): string {
-  return normalizeEscapedMathDelimiters(normalizeBracketMath(md));
-}
 
 function normalizeSvgCodeFences(md: string): string {
   // Some generated documents wrap SVG in triple-backtick fences, which makes
@@ -217,29 +189,42 @@ function normalizeDocumentHtmlAndSvg(md: string): string {
   return normalized;
 }
 
-// Initialize markdown-it with texmath plugin for VS Code-style math rendering
+// Initialize markdown-it with VS Code-compatible math parsing via @vscode/markdown-it-katex.
+// The plugin handles tokenization; we override its KaTeX renderers below to emit
+// MathJax carrier delimiters instead.
 const md = new MarkdownIt({
   html: true,
   breaks: true,
   linkify: true,
   typographer: true
-}).use(texmath, {
-  engine: {
-    // Custom engine that preserves LaTeX for MathJax to render
-    renderToString(tex: string, options: any) {
-      // texmath sets options.displayMode (not options.display) for block math.
-      // Also detect multiline content (from $$\n...\n$$ blocks) which math_block passes
-      // with no displayMode flag on the rule. Use \[...\] for display math to avoid
-      // the JavaScript String.replace() special pattern where $$ → $ in replacement strings.
-      const isDisplay = !!(options && (options.display || options.displayMode)) || tex.includes('\n');
-      if (isDisplay) {
-        return `\\[${tex}\\]`;
-      }
-      return `$${tex}$`;
-    }
-  },
-  delimiters: ['dollars', 'brackets', 'gitlab', 'julia', 'kramdown'], // Support all common delimiters
+}).use(vscodeKatex, {
+  enableFencedBlocks: true,
 });
+
+// Override KaTeX renderer rules — emit MathJax carrier delimiters instead of KaTeX HTML.
+const escapeTex = (tex: string) => md.utils.escapeHtml(tex);
+
+const renderInlineMath = (tokens: any[], idx: number) => {
+  return `\\(${escapeTex(tokens[idx].content)}\\)`;
+};
+
+const renderDisplayMath = (tokens: any[], idx: number) => {
+  return `<div class="math-display">\\[${escapeTex(tokens[idx].content)}\\]</div>\n`;
+};
+
+md.renderer.rules.math_inline = renderInlineMath;
+md.renderer.rules.math_inline_block = renderDisplayMath;
+md.renderer.rules.math_block = renderDisplayMath;
+md.renderer.rules.math_inline_bare_block = renderDisplayMath;
+
+// Override fence renderer only for ```math blocks; delegate everything else to the original.
+const originalFence = md.renderer.rules.fence!;
+md.renderer.rules.fence = (tokens: any[], idx: number, options: any, env: any, self: any) => {
+  if (tokens[idx].info.trim().toLowerCase() === 'math') {
+    return renderDisplayMath(tokens, idx);
+  }
+  return originalFence(tokens, idx, options, env, self);
+};
 
 const markdownSanitizerConfig = {
   ADD_TAGS: ['mjx-container', 'mjx-math', 'mjx-mrow', 'mjx-mo', 'mjx-mi', 'mjx-mn',
@@ -258,6 +243,9 @@ const markdownSanitizerConfig = {
              'stroke-dasharray', 'text-anchor', 'font-size', 'font-weight', 'font-family', 'marker-end',
              'markerWidth', 'markerHeight', 'refX', 'refY', 'orient',
              'checked', 'disabled', 'type'],
+  // Local images are served through the printdown:// protocol, which DOMPurify
+  // would otherwise strip along with the rest of its default URI allowlist.
+  ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|printdown):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   FORCE_BODY: false,
 };
 
@@ -304,40 +292,6 @@ function applyMathJaxMacros(macros: Record<string, string>) {
   if (mj.typesetClear) mj.typesetClear();
 }
 
-// Patch the dollars inline regex to support spaces in math expressions
-// The default regex /\$((?:[^\s\\])|(?:\S.*?[^\s\\]))\$/gy rejects expressions with spaces
-// We add a custom rule that matches $...$ with any content (including spaces)
-const customDollarRule = (state: any, silent: boolean) => {
-  const pos = state.pos;
-  const str = state.src;
-  
-  // Match $...$ with any content (including spaces)
-  const rex = /\$([^$]+?)\$/gy;
-  rex.lastIndex = pos;
-  const pre = str.startsWith('$', pos);
-  const match = pre && rex.exec(str);
-  const res = !!match && pos < rex.lastIndex;
-  
-  if (res) {
-    if (!silent) {
-      const token = state.push('math_inline_fixed', 'math', 0);
-      token.content = match[1];
-      token.markup = '$';
-    }
-    state.pos = rex.lastIndex;
-  }
-  return res;
-};
-
-// Register custom renderer for our fixed inline math
-md.renderer.rules['math_inline_fixed'] = (tokens, idx) => {
-  const tex = tokens[idx].content;
-  // Use our custom engine to render
-  return `$${tex}$`;
-};
-
-// Insert our custom rule before 'escape' to catch space-containing math before other rules
-md.inline.ruler.before('escape', 'math_inline_fixed', customDollarRule);
 
 // Declare MathJax window object
 declare global {
@@ -1750,10 +1704,13 @@ function scheduleSessionSave() {
   }, SESSION_SAVE_DEBOUNCE_MS);
 }
 
-// Note: Math extraction/restoration functions removed - markdown-it-texmath handles this now
 
 interface RenderOptions {
   skipEditorUpdate?: boolean;
+}
+
+function isCurrentRender(renderId: number, index: number, tab: Tab): boolean {
+  return renderId === renderGeneration && tabs[index] === tab && activeTabIndex === index;
 }
 
 async function renderTab(index: number, options: RenderOptions = {}) {
@@ -1773,7 +1730,7 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   // Extract frontmatter macros (optional) and strip it from the rendered body
   const { body: markdownBodyRaw, macros } = extractFrontmatter(tab.content);
   const markdownBody = normalizeDocumentHtmlAndSvg(
-    normalizeSvgCodeFences(normalizeMathDelimiters(markdownBodyRaw))
+    normalizeSvgCodeFences(markdownBodyRaw)
   );
   applyMathJaxMacros(macros);
 
@@ -1796,6 +1753,22 @@ async function renderTab(index: number, options: RenderOptions = {}) {
       const temp = document.createElement('div');
       temp.innerHTML = html;
       const imgs = Array.from(temp.querySelectorAll('img')) as HTMLImageElement[];
+      const localImagePaths = new Set<string>();
+      imgs.forEach(img => {
+        const originalSrc = img.getAttribute('src') || '';
+        if (!originalSrc
+          || /^(https?:|data:|printdown:|file:\/\/)/i.test(originalSrc)
+          || /^\\\\/.test(originalSrc)
+          || /^[A-Za-z]:[\\/]/.test(originalSrc)
+          || originalSrc.startsWith('/')) {
+          return;
+        }
+        const sourcePath = originalSrc.split(/[?#]/, 1)[0];
+        localImagePaths.add(`${baseDir}/${sourcePath}`);
+      });
+      if (localImagePaths.size > 0) {
+        await window.protocolDirs.allowFiles(tab.filePath, [...localImagePaths]);
+      }
       imgs.forEach(img => {
         const originalSrc = img.getAttribute('src') || '';
         if (!originalSrc) return;
@@ -1807,7 +1780,9 @@ async function renderTab(index: number, options: RenderOptions = {}) {
         const joined = `${baseDir}/${cleaned}`;
         const normalized = joined.replace(/\\/g, '/').replace(/\/+/g, '/');
         const pathWithLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
-        const protocolUrl = `printdown://${pathWithLeadingSlash}`;
+        // A fixed host keeps the absolute path in the URL pathname. Without it,
+        // Chromium treats the first path segment as a hostname and lowercases it.
+        const protocolUrl = `printdown://local${pathWithLeadingSlash}`;
         img.setAttribute('src', protocolUrl);
         img.setAttribute('data-original-src', originalSrc);
       });
@@ -1816,6 +1791,10 @@ async function renderTab(index: number, options: RenderOptions = {}) {
       console.error('[IMAGE] DOM rewrite error:', err);
     }
   }
+
+  // Image authorization is asynchronous. A newer render may have completed
+  // while this one was waiting, so never let stale HTML replace its preview.
+  if (!isCurrentRender(renderId, index, tab)) return;
   
   // Set the HTML — sanitize to prevent XSS from malicious markdown files.
   // ADD_TAGS/ADD_ATTR allow MathJax (mjx-*), Mermaid (svg, foreignObject), and Draw.io (svg, defs, marker) to survive.
@@ -1825,7 +1804,7 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   contentDiv.querySelectorAll('svg').forEach(svg => {
     svg.classList.add('raw-markdown-svg');
   });
-  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  if (!isCurrentRender(renderId, index, tab)) return;
   applyActiveTheme();
   const psInitial = loadPageSettings();
   applyPageView(psInitial);
@@ -1839,16 +1818,16 @@ async function renderTab(index: number, options: RenderOptions = {}) {
   // Process diagrams and math on every render (tabs rebuild the DOM each time)
   // Process Mermaid diagrams first
   await processMermaidDiagrams(contentDiv);
-  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  if (!isCurrentRender(renderId, index, tab)) return;
   setupResizableMermaidDiagrams(contentDiv);
 
   // Process UML sequence diagrams (converted to Mermaid under the hood)
   await processUMLSequenceDiagrams(contentDiv);
-  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  if (!isCurrentRender(renderId, index, tab)) return;
 
   // Process Draw.io diagrams
   await processDrawioDiagrams(contentDiv);
-  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  if (!isCurrentRender(renderId, index, tab)) return;
 
   // Typeset math with MathJax
   if (window.MathJax && window.MathJax.typesetPromise) {
@@ -1860,7 +1839,7 @@ async function renderTab(index: number, options: RenderOptions = {}) {
       console.error('[MATHJAX] Error details:', JSON.stringify(err, null, 2));
     }
   }
-  if (renderId !== renderGeneration || tabs[index] !== tab || activeTabIndex !== index) return;
+  if (!isCurrentRender(renderId, index, tab)) return;
   
   // Apply page view after all asynchronous rendering has settled.
   const pageSettings = loadPageSettings();
@@ -2584,6 +2563,7 @@ async function cleanupRemovedTabs(removedTabs: Tab[]): Promise<void> {
     if (tab.filePath) {
       removedDirs.add(fileDir(tab.filePath));
       await window.fileWatch.unwatchFile(tab.filePath);
+      await window.protocolDirs.disallowFiles(tab.filePath);
     }
   }));
 
@@ -2695,7 +2675,7 @@ async function openFilePath(filePath: string, options: { activate?: boolean; tem
     if (!temporary) {
       window.fileWatch.watchFile(filePath);
     }
-    window.protocolDirs.allow(fileDir(filePath));
+    await window.protocolDirs.allow(fileDir(filePath));
     if (activate) {
       await renderTab(tabs.length - 1);
     }
@@ -2786,21 +2766,510 @@ async function exportPDF(automaticOutput = false): Promise<string | null> {
   return null;
 }
 
+interface EpubImageResource {
+  fileName: string;
+  mediaType: string;
+  base64: string;
+}
+
+interface EpubPayload {
+  title: string;
+  author: string;
+  language: string;
+  css: string;
+  chapters: { title: string; xhtml: string }[];
+  images: EpubImageResource[];
+}
+
+const EPUB_NATIVE_MEDIA_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif'
+};
+
+function normalizeMediaType(mediaType: string): string {
+  return mediaType.split(';', 1)[0].trim().toLowerCase();
+}
+
+function epubMediaTypeFromUrl(url: string): string | null {
+  const extension = (url.split(/[?#]/)[0].match(/\.([A-Za-z0-9]+)$/)?.[1] || '').toLowerCase();
+  switch (extension) {
+    case 'png': return 'image/png';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'avif': return 'image/avif';
+    case 'bmp': return 'image/bmp';
+    case 'tif':
+    case 'tiff': return 'image/tiff';
+    case 'svg': return 'image/svg+xml';
+    default: return null;
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image data'));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+function isNativeEpubMediaType(mediaType: string): boolean {
+  return Object.prototype.hasOwnProperty.call(EPUB_NATIVE_MEDIA_TYPE_EXTENSIONS, mediaType);
+}
+
+function blobWithMediaType(blob: Blob, mediaType: string | null): Blob {
+  return mediaType && normalizeMediaType(blob.type) !== mediaType
+    ? new Blob([blob], { type: mediaType })
+    : blob;
+}
+
+async function rasterizeImageToPng(blob: Blob): Promise<Blob> {
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error('The image could not be decoded for EPUB export'));
+      element.src = objectUrl;
+    });
+
+    if (image.naturalWidth === 0 || image.naturalHeight === 0) {
+      throw new Error('The image has no intrinsic dimensions');
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Unable to create a canvas for EPUB image conversion');
+    }
+    context.drawImage(image, 0, 0);
+
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(converted => {
+        if (converted) {
+          resolve(converted);
+          return;
+        }
+        reject(new Error('Unable to encode the EPUB image as PNG'));
+      }, 'image/png');
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function prepareEpubImage(blob: Blob, source: string): Promise<{ blob: Blob; mediaType: string }> {
+  const responseMediaType = normalizeMediaType(blob.type);
+  const sourceMediaType = epubMediaTypeFromUrl(source);
+  const nativeMediaType = isNativeEpubMediaType(responseMediaType)
+    ? responseMediaType
+    : ((responseMediaType.length === 0 || responseMediaType === 'application/octet-stream')
+      && sourceMediaType
+      && isNativeEpubMediaType(sourceMediaType)
+      ? sourceMediaType
+      : null);
+
+  if (nativeMediaType) {
+    return { blob, mediaType: nativeMediaType };
+  }
+
+  const rasterMediaType = responseMediaType.startsWith('image/')
+    ? responseMediaType
+    : sourceMediaType;
+  if (!rasterMediaType?.startsWith('image/')) {
+    throw new Error(`Unsupported image media type "${responseMediaType || 'unknown'}"`);
+  }
+
+  return {
+    blob: await rasterizeImageToPng(blobWithMediaType(blob, rasterMediaType)),
+    mediaType: 'image/png'
+  };
+}
+
+async function fetchEpubImage(source: string, documentPath: string): Promise<Blob> {
+  try {
+    const response = await fetch(source);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.blob();
+  } catch (browserError) {
+    if (!/^https?:/i.test(source)) {
+      throw browserError;
+    }
+
+    const remoteImage = await window.printExport.fetchEPUBImage(documentPath, source);
+    if (!remoteImage.success || !remoteImage.base64) {
+      const reason = remoteImage.error
+        || (browserError instanceof Error ? browserError.message : String(browserError));
+      throw new Error(`Unable to retrieve remote image: ${reason}`);
+    }
+
+    const binary = atob(remoteImage.base64);
+    const bytes = Uint8Array.from(binary, byte => byte.charCodeAt(0));
+    return new Blob([bytes], { type: remoteImage.mediaType || epubMediaTypeFromUrl(source) || '' });
+  }
+}
+
+function removeEpubImage(element: HTMLImageElement): void {
+  const wrapper = element.closest('.resizable-image');
+  element.remove();
+  if (wrapper && !wrapper.querySelector('img')) {
+    wrapper.remove();
+  }
+}
+
+async function rasterizeSvgElement(
+  svg: SVGSVGElement,
+  fontCache?: SVGSVGElement
+): Promise<Blob> {
+  const svgClone = svg.cloneNode(true) as SVGSVGElement;
+
+  if (fontCache) {
+    const usesGlyphs = Array.from(svgClone.querySelectorAll('use')).some(
+      use => (use.getAttribute('xlink:href') || use.getAttribute('href') || '').startsWith('#MJX-')
+    );
+    if (usesGlyphs) {
+      for (const defs of Array.from(fontCache.querySelectorAll('defs'))) {
+        svgClone.insertBefore(defs.cloneNode(true), svgClone.firstChild);
+      }
+    }
+  }
+
+  const viewBox = svgClone.getAttribute('viewBox');
+  if (viewBox) {
+    const parts = viewBox.split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+      const scaleFactor = 3;
+      svgClone.setAttribute('width', String(Math.ceil(parts[2] * scaleFactor)));
+      svgClone.setAttribute('height', String(Math.ceil(parts[3] * scaleFactor)));
+    }
+  }
+
+  if (!svgClone.getAttribute('xmlns')) {
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  }
+
+  const svgString = new XMLSerializer().serializeToString(svgClone);
+  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  return rasterizeImageToPng(blob);
+}
+
+async function rasterizeEpubSvgs(
+  root: HTMLElement,
+  images: EpubImageResource[],
+  fontCache?: SVGSVGElement
+): Promise<void> {
+  const topLevelSvgs = Array.from(root.querySelectorAll('svg')).filter(
+    svg => !svg.parentElement?.closest('svg')
+  );
+
+  for (const svg of topLevelSvgs) {
+    try {
+      const pngBlob = await rasterizeSvgElement(svg as SVGSVGElement, fontCache);
+      const fileName = `image-${images.length + 1}.png`;
+      images.push({
+        fileName,
+        mediaType: 'image/png',
+        base64: await blobToBase64(pngBlob)
+      });
+
+      const img = document.createElement('img');
+      img.setAttribute('src', `../images/${fileName}`);
+      img.setAttribute('alt', '');
+
+      const isInlineMath = !!svg.closest('.math-inline');
+      if (isInlineMath) {
+        const heightAttr = svg.getAttribute('height') || '';
+        const exMatch = heightAttr.match(/^([\d.]+)ex$/);
+        const heightEm = exMatch ? (parseFloat(exMatch[1]) * 0.5).toFixed(3) : '1';
+        const svgStyle = svg.getAttribute('style') || '';
+        const vaMatch = svgStyle.match(/vertical-align:\s*([-\d.]+)ex/);
+        const verticalAlign = vaMatch
+          ? `${(parseFloat(vaMatch[1]) * 0.5).toFixed(3)}em`
+          : 'middle';
+        img.setAttribute('style', `height:${heightEm}em; vertical-align:${verticalAlign}`);
+      } else {
+        img.setAttribute('style', 'max-width:100%; height:auto');
+      }
+
+      svg.replaceWith(img);
+    } catch (error) {
+      console.error('[EPUB] Failed to rasterize inline SVG:', error);
+    }
+  }
+}
+
+// Embeds every <img> as an EPUB resource so the book stays self-contained.
+async function collectEpubImages(root: HTMLElement, documentPath: string): Promise<EpubImageResource[]> {
+  const images: EpubImageResource[] = [];
+  const cache = new Map<string, string>();
+  const elements = Array.from(root.querySelectorAll('img'));
+
+  for (const element of elements) {
+    const source = element.getAttribute('src') || '';
+    if (!source) {
+      removeEpubImage(element);
+      continue;
+    }
+
+    const cached = cache.get(source);
+    if (cached) {
+      element.setAttribute('src', cached);
+      continue;
+    }
+
+    try {
+      const sourceBlob = await fetchEpubImage(source, documentPath);
+      const image = await prepareEpubImage(sourceBlob, source);
+      const fileName = `image-${images.length + 1}.${EPUB_NATIVE_MEDIA_TYPE_EXTENSIONS[image.mediaType]}`;
+      images.push({ fileName, mediaType: image.mediaType, base64: await blobToBase64(image.blob) });
+
+      const href = `../images/${fileName}`;
+      cache.set(source, href);
+      element.setAttribute('src', href);
+    } catch (error) {
+      console.error('[EPUB] Failed to embed image:', source, error);
+      removeEpubImage(element);
+    }
+  }
+
+  return images;
+}
+
+// Strips viewer-only chrome and normalizes markup that e-readers cannot interpret.
+function prepareEpubContent(clone: HTMLElement): void {
+  clone.querySelectorAll('.page-guide, .resize-handle, .drag-handle, script, link').forEach(el => el.remove());
+  clone.querySelectorAll('picture source').forEach(source => source.remove());
+  clone.querySelectorAll('img').forEach(image => {
+    image.removeAttribute('srcset');
+    image.removeAttribute('sizes');
+    image.removeAttribute('loading');
+    image.removeAttribute('decoding');
+  });
+  clone.querySelectorAll('style').forEach(style => {
+    if (!style.closest('svg')) {
+      style.remove();
+    }
+  });
+
+  clone.querySelectorAll('.mermaid-diagram foreignObject').forEach(foreignObject => {
+    foreignObject.querySelectorAll('br').forEach(lineBreak => lineBreak.replaceWith('\n'));
+    const lines = (foreignObject.textContent || '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      foreignObject.remove();
+      return;
+    }
+
+    const width = Number.parseFloat(foreignObject.getAttribute('width') || '0');
+    const height = Number.parseFloat(foreignObject.getAttribute('height') || '0');
+    const labelWidth = Number.isFinite(width) && width > 0 ? width : 200;
+    const labelHeight = Number.isFinite(height) && height > 0 ? height : 24;
+    const fontSize = 16;
+    const lineHeight = fontSize * 1.2;
+    const startY = (labelHeight - (lines.length - 1) * lineHeight) / 2;
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('class', 'epub-mermaid-label');
+    text.setAttribute('x', String(labelWidth / 2));
+    text.setAttribute('y', String(startY));
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-family', 'Arial, Helvetica, sans-serif');
+    text.setAttribute('font-size', String(fontSize));
+    text.setAttribute('fill', '#1f2937');
+
+    lines.forEach((line, index) => {
+      const span = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      span.setAttribute('x', String(labelWidth / 2));
+      span.setAttribute('dy', index === 0 ? '0' : String(lineHeight));
+      span.textContent = line;
+      text.appendChild(span);
+    });
+
+    foreignObject.replaceWith(text);
+  });
+
+  clone.querySelectorAll(
+    '.mermaid-diagram text'
+  ).forEach(element => {
+    const styledElement = element as HTMLElement | SVGElement;
+    styledElement.style.setProperty('color', '#1f2937', 'important');
+    styledElement.style.setProperty('fill', '#1f2937', 'important');
+  });
+
+  clone.querySelectorAll('mjx-container').forEach(container => {
+    const svg = container.querySelector('svg');
+    const replacement = document.createElement(container.getAttribute('display') === 'true' ? 'div' : 'span');
+    replacement.className = container.getAttribute('display') === 'true' ? 'math-display' : 'math-inline';
+    if (svg) {
+      replacement.appendChild(svg);
+    } else {
+      replacement.textContent = container.textContent || '';
+    }
+    container.replaceWith(replacement);
+  });
+
+  clone.querySelectorAll('.resizable-image').forEach(wrapper => {
+    wrapper.removeAttribute('style');
+  });
+
+  clone.querySelectorAll('[contenteditable], [draggable], [tabindex]').forEach(el => {
+    el.removeAttribute('contenteditable');
+    el.removeAttribute('draggable');
+    el.removeAttribute('tabindex');
+  });
+
+  clone.querySelectorAll('svg').forEach(svg => {
+    if (!svg.getAttribute('xmlns')) {
+      svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+  });
+}
+
+function serializeEpubNodes(nodes: Node[], mathJaxFontCache?: SVGSVGElement): string {
+  const serializer = new XMLSerializer();
+  const fontCache = mathJaxFontCache ? serializer.serializeToString(mathJaxFontCache) : '';
+  return nodes
+    .map(node => serializer.serializeToString(node))
+    .join('\n')
+    .replace(/ xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g, '')
+    .replace(/^/, fontCache);
+}
+
+// Splits the document at top-level <h1> boundaries so readers get a usable spine.
+function buildEpubChapters(
+  clone: HTMLElement,
+  fallbackTitle: string,
+  mathJaxFontCache?: SVGSVGElement
+): { title: string; xhtml: string }[] {
+  const chapters: { title: string; nodes: Node[] }[] = [];
+  let current: { title: string; nodes: Node[] } | null = null;
+
+  for (const node of Array.from(clone.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName === 'H1') {
+      current = { title: (node.textContent || fallbackTitle).trim() || fallbackTitle, nodes: [node] };
+      chapters.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { title: fallbackTitle, nodes: [] };
+      chapters.push(current);
+    }
+    current.nodes.push(node);
+  }
+
+  return chapters
+    .map(chapter => ({
+      title: chapter.title,
+      xhtml: serializeEpubNodes(chapter.nodes, mathJaxFontCache).trim()
+    }))
+    .filter(chapter => chapter.xhtml.length > 0);
+}
+
+function epubThemeCss(): string {
+  const theme = themes[currentThemeName];
+  return `body { font-family: ${theme.fontFamily}; line-height: ${theme.lineHeight}; }
+h1, h2, h3, h4, h5, h6 { color: ${theme.heading}; }
+a { color: ${theme.link}; }
+code, pre { font-family: ${theme.codeFontFamily}; background: ${theme.codeBg}; color: ${theme.codeText}; }
+pre { padding: 0.8em; border-radius: 4px; }
+blockquote { background: ${theme.quoteBg}; border-left: 4px solid ${theme.quoteBorder}; color: ${theme.quoteText}; margin: 1em 0; padding: 0.5em 1em; }
+.math-display { display: block; text-align: center; margin: 1em 0; }
+.resizable-image { text-align: center; }
+`;
+}
+
+async function buildEpubPayload(tab: Tab): Promise<EpubPayload | null> {
+  const contentDiv = document.getElementById('markdown-content');
+  if (!contentDiv) return null;
+
+  await waitForRenderingComplete();
+
+  const clone = contentDiv.cloneNode(true) as HTMLElement;
+  prepareEpubContent(clone);
+  const images = await collectEpubImages(clone, tab.filePath);
+  const mathJaxFontCache = document.getElementById('MJX-SVG-global-cache')
+    ?.cloneNode(true) as SVGSVGElement | undefined;
+
+  await rasterizeEpubSvgs(clone, images, mathJaxFontCache);
+
+  const hasRemainingSvgs = !!clone.querySelector('svg');
+  const documentTitle = (clone.querySelector('h1')?.textContent || tab.title).trim() || tab.title;
+  const chapters = buildEpubChapters(clone, documentTitle, hasRemainingSvgs ? mathJaxFontCache : undefined);
+
+  return {
+    title: documentTitle,
+    author: 'PrintDown',
+    language: document.documentElement.lang || 'en',
+    css: epubThemeCss(),
+    chapters,
+    images
+  };
+}
+
+async function exportEPUB(automaticOutput = false): Promise<string | null> {
+  if (activeTabIndex < 0) return null;
+  const tab = tabs[activeTabIndex];
+  if (!tab) return null;
+
+  try {
+    const payload = await buildEpubPayload(tab);
+    if (!payload) {
+      showStatus('EPUB export failed', 'error');
+      return null;
+    }
+
+    const savePath = await window.printExport.exportEPUB(tab.filePath, payload, automaticOutput);
+    if (savePath) {
+      console.log('EPUB saved to:', savePath);
+      if (!automaticOutput) {
+        showStatus('Exported to EPUB', 'success');
+      }
+    }
+    return savePath;
+  } catch (error) {
+    console.error('[EPUB] Export failed:', error);
+    if (!automaticOutput) {
+      showStatus('EPUB export failed', 'error');
+    }
+    return null;
+  }
+}
+
 interface FolderConversionProgress {
   completed: number;
   total: number;
   failures: string[];
 }
 
-function updateFolderConversionProgress(progress: FolderConversionProgress, currentFileName?: string): void {
+type FolderConversionFormat = 'pdf' | 'epub';
+
+function updateFolderConversionProgress(
+  progress: FolderConversionProgress,
+  format: FolderConversionFormat,
+  currentFileName?: string
+): void {
   const label = document.getElementById('folder-conversion-progress-label');
   const detail = document.getElementById('folder-conversion-progress-detail');
   const bar = document.getElementById('folder-conversion-progress-bar') as HTMLProgressElement | null;
   if (!label || !detail || !bar) return;
 
+  const formatLabel = format.toUpperCase();
   label.textContent = progress.completed === progress.total
     ? (progress.failures.length === 0
-      ? `Converted ${progress.total} Markdown ${progress.total === 1 ? 'file' : 'files'} to PDF.`
+      ? `Converted ${progress.total} Markdown ${progress.total === 1 ? 'file' : 'files'} to ${formatLabel}.`
       : `Finished with ${progress.failures.length} failed ${progress.failures.length === 1 ? 'file' : 'files'}.`)
     : `Converting ${progress.completed + 1} of ${progress.total} Markdown files…`;
   detail.textContent = currentFileName || (progress.failures.length > 0
@@ -2810,9 +3279,14 @@ function updateFolderConversionProgress(progress: FolderConversionProgress, curr
   bar.value = progress.completed;
 }
 
-async function convertFolderToPDF(filePaths: string[]): Promise<void> {
+async function convertMarkdownFiles(
+  filePaths: string[],
+  format: FolderConversionFormat,
+  source: 'file' | 'folder'
+): Promise<void> {
   const modal = document.getElementById('folder-conversion-modal');
   const closeButton = document.getElementById('folder-conversion-close') as HTMLButtonElement | null;
+  const modalTitle = document.getElementById('folder-conversion-title');
   if (!modal || !closeButton) {
     console.error('[CONVERT] Folder conversion dialog is unavailable.');
     showStatus('Folder conversion unavailable', 'error');
@@ -2824,12 +3298,19 @@ async function convertFolderToPDF(filePaths: string[]): Promise<void> {
     return;
   }
 
+  const formatLabel = format.toUpperCase();
+  if (modalTitle) {
+    modalTitle.textContent = source === 'folder'
+      ? `Convert Markdown Folder to ${formatLabel}s`
+      : `Convert Markdown File to ${formatLabel}`;
+  }
+
   const originalActiveTabIndex = activeTabIndex;
   const temporaryTabs: Tab[] = [];
   const progress: FolderConversionProgress = { completed: 0, total: filePaths.length, failures: [] };
   closeButton.hidden = true;
   modal.classList.remove('hidden');
-  updateFolderConversionProgress(progress, 'Preparing conversion…');
+  updateFolderConversionProgress(progress, format, 'Preparing conversion…');
 
   try {
     for (const filePath of filePaths) {
@@ -2839,13 +3320,13 @@ async function convertFolderToPDF(filePaths: string[]): Promise<void> {
         progress.failures.push(filePath.split(/[/\\]/).pop() || filePath);
       } else {
         temporaryTabs.push(temporaryTab);
-        const pdfPath = await exportPDF(true);
-        if (!pdfPath) {
+        const outputPath = format === 'epub' ? await exportEPUB(true) : await exportPDF(true);
+        if (!outputPath) {
           progress.failures.push(temporaryTab.title);
         }
       }
       progress.completed++;
-      updateFolderConversionProgress(progress, filePath.split(/[/\\]/).pop() || filePath);
+      updateFolderConversionProgress(progress, format, filePath.split(/[/\\]/).pop() || filePath);
     }
   } catch (error) {
     console.error('[CONVERT] Folder conversion failed:', error);
@@ -2866,11 +3347,11 @@ async function convertFolderToPDF(filePaths: string[]): Promise<void> {
       clearActiveDocumentView();
     }
     updateTabUI();
-    updateFolderConversionProgress(progress);
+    updateFolderConversionProgress(progress, format);
     closeButton.hidden = false;
     showStatus(
       progress.failures.length === 0
-        ? `Converted ${progress.total} Markdown files to PDF`
+        ? `Converted ${progress.total} Markdown files to ${formatLabel}`
         : `Converted ${progress.total - progress.failures.length} of ${progress.total} files`,
       progress.failures.length === 0 ? 'success' : 'error'
     );
@@ -2967,6 +3448,278 @@ async function copyDebugLogs() {
   console.log(`[DEBUG] Debug logs copied to clipboard (App v${appVersion}, Tab ${activeTabIndex >= 0 ? activeTabIndex : 'N/A'})`);
 }
 
+// ── Merge Markdown files ────────────────────────────────────────────────────
+
+const MERGE_PAGE_BREAK_HTML = '<div class="page-break-before" style="break-before: page; page-break-before: always;"></div>';
+
+let mergeFilePaths: string[] = [];
+
+function pathSeparatorFor(filePath: string): string {
+  return filePath.includes('\\') && !filePath.includes('/') ? '\\' : '/';
+}
+
+function isAbsoluteOrExternalResource(target: string): boolean {
+  return (
+    target.startsWith('/') ||
+    target.startsWith('#') ||
+    /^[a-zA-Z]:[\\/]/.test(target) ||
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target)
+  );
+}
+
+function resolveAgainstDir(baseDir: string, relative: string): string {
+  const separator = pathSeparatorFor(baseDir);
+  const segments = baseDir.split(/[/\\]/);
+  for (const segment of relative.split(/[/\\]/)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length > 1) segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.join(separator);
+}
+
+// Image references are rewritten relative to the merged file's own folder so the
+// result stays portable, matching how PrintDown resolves relative image paths.
+function rewriteImagePaths(content: string, sourceDir: string, outputDir: string): string {
+  const markdownImage = /(!\[[^\]]*\]\(\s*)(<[^>]*>|[^)\s]+)(\s*(?:"[^"]*"|'[^']*')?\s*\))/g;
+  const htmlImage = /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi;
+  const rewrite = (target: string): string => {
+    const trimmed = target.replace(/^<|>$/g, '');
+    if (!trimmed || isAbsoluteOrExternalResource(trimmed)) return target;
+    return relativePathBetween(outputDir, resolveAgainstDir(sourceDir, trimmed));
+  };
+
+  let inFence = false;
+  return content
+    .split('\n')
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line
+        .replace(markdownImage, (_match, prefix, target, suffix) => `${prefix}${rewrite(target)}${suffix}`)
+        .replace(htmlImage, (_match, prefix, quote, target) => `${prefix}${quote}${rewrite(target)}${quote}`);
+    })
+    .join('\n');
+}
+
+function relativePathBetween(fromDir: string, target: string): string {
+  const fromSegments = fromDir.split(/[/\\]/).filter(Boolean);
+  const targetSegments = target.split(/[/\\]/).filter(Boolean);
+  let shared = 0;
+  while (shared < fromSegments.length && shared < targetSegments.length
+    && fromSegments[shared] === targetSegments[shared]) {
+    shared++;
+  }
+  // Nothing in common (e.g. different Windows drives) — keep the absolute path.
+  if (shared === 0) return target;
+  const upward = new Array(fromSegments.length - shared).fill('..');
+  return [...upward, ...targetSegments.slice(shared)].join('/') || '.';
+}
+
+function splitFrontMatter(content: string): { frontMatter: string; body: string } {
+  const match = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
+  if (!match) {
+    return { frontMatter: '', body: content };
+  }
+  return { frontMatter: match[0].trim(), body: content.slice(match[0].length) };
+}
+
+async function buildMergedMarkdown(filePaths: string[], outputPath: string, insertPageBreaks: boolean): Promise<string> {
+  const outputDir = fileDir(outputPath);
+  const sections: string[] = [];
+  let frontMatter = '';
+
+  for (const filePath of filePaths) {
+    const result = await window.fileSystem.readFile(filePath);
+    if (!result.success) {
+      throw new Error(`Could not read ${filePath.split(/[/\\]/).pop()}: ${result.error || 'unknown error'}`);
+    }
+    const parsed = splitFrontMatter(result.content || '');
+    // Only the first document's front matter survives; later blocks would render
+    // as stray horizontal rules in the middle of the merged document.
+    if (!frontMatter && parsed.frontMatter) {
+      frontMatter = parsed.frontMatter;
+    }
+    sections.push(rewriteImagePaths(parsed.body, fileDir(filePath), outputDir).trim());
+  }
+
+  const separator = insertPageBreaks ? `\n\n${MERGE_PAGE_BREAK_HTML}\n\n` : '\n\n';
+  const body = sections.filter(section => section.length > 0).join(separator);
+  return `${frontMatter ? `${frontMatter}\n\n` : ''}${body}\n`;
+}
+
+function setMergeStatus(message: string, isError = false): void {
+  const status = document.getElementById('merge-status-message');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', isError);
+}
+
+function renderMergeFileList(): void {
+  const list = document.getElementById('merge-file-list');
+  const emptyMessage = document.getElementById('merge-empty-message');
+  const confirmButton = document.getElementById('merge-confirm') as HTMLButtonElement | null;
+  if (!list) return;
+
+  list.innerHTML = '';
+  if (emptyMessage) {
+    emptyMessage.classList.toggle('hidden', mergeFilePaths.length > 0);
+  }
+  if (confirmButton) {
+    confirmButton.disabled = mergeFilePaths.length < 2;
+  }
+
+  mergeFilePaths.forEach((filePath, index) => {
+    const item = document.createElement('li');
+
+    const position = document.createElement('span');
+    position.className = 'merge-file-index';
+    position.textContent = `${index + 1}.`;
+
+    const info = document.createElement('div');
+    info.className = 'merge-file-info';
+    const name = document.createElement('div');
+    name.className = 'merge-file-name';
+    name.textContent = filePath.split(/[/\\]/).pop() || filePath;
+    const dir = document.createElement('div');
+    dir.className = 'merge-file-dir';
+    dir.textContent = fileDir(filePath);
+    info.append(name, dir);
+
+    const actions = document.createElement('div');
+    actions.className = 'merge-file-actions';
+
+    const moveUp = document.createElement('button');
+    moveUp.textContent = '↑';
+    moveUp.title = 'Move up';
+    moveUp.disabled = index === 0;
+    moveUp.addEventListener('click', () => moveMergeFile(index, index - 1));
+
+    const moveDown = document.createElement('button');
+    moveDown.textContent = '↓';
+    moveDown.title = 'Move down';
+    moveDown.disabled = index === mergeFilePaths.length - 1;
+    moveDown.addEventListener('click', () => moveMergeFile(index, index + 1));
+
+    const remove = document.createElement('button');
+    remove.textContent = 'Remove';
+    remove.title = 'Remove from merge';
+    remove.addEventListener('click', () => {
+      mergeFilePaths.splice(index, 1);
+      setMergeStatus('');
+      renderMergeFileList();
+    });
+
+    actions.append(moveUp, moveDown, remove);
+    item.append(position, info, actions);
+    list.appendChild(item);
+  });
+}
+
+function moveMergeFile(from: number, to: number): void {
+  if (to < 0 || to >= mergeFilePaths.length) return;
+  const [moved] = mergeFilePaths.splice(from, 1);
+  mergeFilePaths.splice(to, 0, moved);
+  setMergeStatus('');
+  renderMergeFileList();
+}
+
+function openMergeMarkdownModal(): void {
+  const modal = document.getElementById('merge-markdown-modal');
+  if (!modal) return;
+  setMergeStatus('');
+  renderMergeFileList();
+  modal.classList.remove('hidden');
+}
+
+function closeMergeMarkdownModal(): void {
+  document.getElementById('merge-markdown-modal')?.classList.add('hidden');
+}
+
+async function addMergeFiles(): Promise<void> {
+  const picked = await window.markdownMerge.pickFiles();
+  if (!picked || picked.length === 0) return;
+  const added = picked.filter(filePath => !mergeFilePaths.includes(filePath));
+  mergeFilePaths.push(...added);
+  const skipped = picked.length - added.length;
+  setMergeStatus(skipped > 0 ? `${skipped} file(s) already in the list were skipped.` : '');
+  renderMergeFileList();
+}
+
+async function performMerge(): Promise<void> {
+  if (mergeFilePaths.length < 2) {
+    setMergeStatus('Add at least two files to merge.', true);
+    return;
+  }
+
+  const confirmButton = document.getElementById('merge-confirm') as HTMLButtonElement | null;
+  const pageBreakToggle = document.getElementById('merge-page-break') as HTMLInputElement | null;
+  if (confirmButton) confirmButton.disabled = true;
+  setMergeStatus('Merging…');
+
+  try {
+    const destination = await window.markdownMerge.pickDestination('merged.md');
+    if (destination.canceled || !destination.filePath) {
+      setMergeStatus('');
+      return;
+    }
+
+    const merged = await buildMergedMarkdown(mergeFilePaths, destination.filePath, !!pageBreakToggle?.checked);
+    const writeResult = await window.fileSystem.writeFile(destination.filePath, merged);
+    if (!writeResult.success) {
+      setMergeStatus(writeResult.error || 'Merge failed.', true);
+      return;
+    }
+
+    closeMergeMarkdownModal();
+    // Source folders stay reachable so images that now live outside the merged
+    // file's own folder still resolve through the printdown:// protocol.
+    await Promise.all(mergeFilePaths.map(filePath => window.protocolDirs.allow(fileDir(filePath))));
+    mergeFilePaths = [];
+    renderMergeFileList();
+    await openFilePath(destination.filePath);
+    showStatus('Merged', 'success');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[MERGE] Failed:', message);
+    setMergeStatus(message, true);
+  } finally {
+    if (confirmButton) confirmButton.disabled = mergeFilePaths.length < 2;
+  }
+}
+
+function setupMergeMarkdownUI(): void {
+  const modal = document.getElementById('merge-markdown-modal');
+  if (!modal) return;
+
+  document.getElementById('merge-markdown-close')?.addEventListener('click', closeMergeMarkdownModal);
+  document.getElementById('merge-cancel')?.addEventListener('click', closeMergeMarkdownModal);
+  document.getElementById('merge-add-files')?.addEventListener('click', () => {
+    void addMergeFiles();
+  });
+  document.getElementById('merge-clear-files')?.addEventListener('click', () => {
+    mergeFilePaths = [];
+    setMergeStatus('');
+    renderMergeFileList();
+  });
+  document.getElementById('merge-confirm')?.addEventListener('click', () => {
+    void performMerge();
+  });
+  document.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !modal.classList.contains('hidden')) {
+      closeMergeMarkdownModal();
+      event.preventDefault();
+    }
+  });
+  renderMergeFileList();
+}
+
 // Log app version on startup
 window.appVersion().then(version => {
   console.log(`[APP] PrintDown renderer loaded, version: ${version}`);
@@ -2975,9 +3728,19 @@ window.appVersion().then(version => {
 // Event listeners
 window.menuEvents.onMenuOpen(openFile);
 window.menuEvents.onMenuExportPDF(exportPDF);
-window.menuEvents.onMenuConvertFolderToPDF((filePaths) => {
-  void convertFolderToPDF(filePaths);
+window.menuEvents.onMenuExportEPUB(() => {
+  void exportEPUB();
 });
+window.menuEvents.onMenuConvertFolderToPDF((filePaths) => {
+  void convertMarkdownFiles(filePaths, 'pdf', 'folder');
+});
+window.menuEvents.onMenuConvertFileToEPUB((filePath) => {
+  void convertMarkdownFiles([filePath], 'epub', 'file');
+});
+window.menuEvents.onMenuConvertFolderToEPUB((filePaths) => {
+  void convertMarkdownFiles(filePaths, 'epub', 'folder');
+});
+window.menuEvents.onMenuMergeMarkdown(openMergeMarkdownModal);
 document.getElementById('folder-conversion-close')?.addEventListener('click', () => {
   document.getElementById('folder-conversion-modal')?.classList.add('hidden');
 });
@@ -2986,6 +3749,7 @@ window.menuEvents.onMenuSave(async () => {
   await saveActiveTab();
 });
 setupPageSettingsUI();
+setupMergeMarkdownUI();
 
 // Recompute pagination on window resize
 window.addEventListener('resize', scheduleReflow);
@@ -3103,7 +3867,7 @@ window.menuEvents.onOpenFileFromSystem(async (_event: any, filePath: string) => 
         
         // Start watching the file and allow its directory via the protocol handler
         window.fileWatch.watchFile(filePath);
-        window.protocolDirs.allow(fileDir(filePath));
+        await window.protocolDirs.allow(fileDir(filePath));
 
         await renderTab(tabs.length - 1);
         updateTabUI();
@@ -3159,7 +3923,7 @@ window.menuEvents.onRestoreSession(async (_event: any, session: any) => {
           
           // Start watching the file and allow its directory via the protocol handler
           window.fileWatch.watchFile(filePath);
-          window.protocolDirs.allow(fileDir(filePath));
+          await window.protocolDirs.allow(fileDir(filePath));
         }
       } catch (err) {
         console.error('Failed to restore file:', filePath);
